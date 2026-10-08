@@ -28,7 +28,7 @@ export const TALENTS: TalentDef[] = [
   { id: 'b_terreur', branch: 'boucher', tier: 3, name: 'Terreur', desc: 'Les rivaux t’attaquent 25 % moins souvent' },
   { id: 'b_maindefer', branch: 'boucher', tier: 4, name: 'Main de fer', desc: 'Sa Poigne compte double en assaut' },
   { id: 'b_increvable', branch: 'boucher', tier: 5, name: 'Increvable', desc: 'Risque de mort au combat ÷2, blessures plus courtes' },
-  { id: 'r_invisible', branch: 'renard', tier: 1, name: 'Pas vu, pas pris', desc: 'Plus de heat quand il participe à une opération' },
+  { id: 'r_invisible', branch: 'renard', tier: 1, name: 'Pas vu, pas pris', desc: 'Le Don n’est plus reconnu sur le terrain : aucune heat (+5) ni dossier (+4) en plus quand il participe à un assaut ou un coup' },
   { id: 'r_comptes', branch: 'renard', tier: 2, name: 'Comptabilité créative', desc: 'Commission de blanchiment 8 % au lieu de 15 %' },
   { id: 'r_avocat', branch: 'renard', tier: 3, name: 'Avocat de la famille', desc: 'Peines de prison de tes hommes ÷2' },
   { id: 'r_ombre', branch: 'renard', tier: 4, name: 'Homme de l’ombre', desc: 'Descentes de police −20 %' },
