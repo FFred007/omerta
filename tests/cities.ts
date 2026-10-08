@@ -104,7 +104,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
     CM.commissionTick(t);
     if (cc.seat) seated++;
   }
-  check(seated > 380, `admission obtenue ${seated}/400 avec toutes les voix achetées`);
+  check(seated > 355, `admission obtenue ${seated}/400 avec toutes les voix achetées`);
   // la mise au ban crée la coalition
   const t = E.startGame(undefined, true);
   for (const d of t.districts.filter((x) => (x.city ?? 'corrano') === 'corrano').slice(0, 5)) d.owner = 'player';

@@ -22,6 +22,7 @@ import { breachTruce, commissionTick, truceActive } from './commission';
 import { CITIES } from './data';
 import { finalize } from './score';
 import { bondsTick, onDeath, onPromote, shareOp } from './bonds';
+import { bizHeat, bizName, buildBlocker, owns, resale, respectFromBuildings } from './buildings';
 import { onKilled, vendettasTick } from './vendetta';
 import { hunterRaidMult, huntersTick } from './hunters';
 import { heistTick } from './heist';
@@ -44,10 +45,8 @@ export const RECRUITS_PER_WEEK = 4;
 export function build(s: GameState, districtId: string, kind: BusinessKind): ActionResult {
   const d = district(s, districtId);
   const def = BUSINESSES[kind];
-  if (d.owner !== 'player') return fail("Ce quartier n'est pas à toi.");
-  if (d.businesses.length >= d.slots) return fail('Plus de place dans ce quartier.');
-  if (def.currency === 'dirty' && s.dirty < def.cost) return fail("Pas assez d'argent sale.");
-  if (def.currency === 'clean' && s.clean < def.cost) return fail("Pas assez d'argent propre.");
+  const why = buildBlocker(s, d, kind);
+  if (why) return fail(why);
   if (def.currency === 'dirty') s.dirty -= def.cost;
   else s.clean -= def.cost;
   d.businesses.push({ id: nextId(s), kind });
@@ -60,11 +59,11 @@ export function sellBusiness(s: GameState, districtId: string, businessId: numbe
   const b = d.businesses.find((x) => x.id === businessId);
   if (!b || d.owner !== 'player') return fail('Impossible.');
   const def = BUSINESSES[b.kind];
-  const refund = Math.round(def.cost * 0.4);
+  const refund = resale(b);
   if (def.currency === 'dirty') s.dirty += refund;
   else s.clean += refund;
   d.businesses = d.businesses.filter((x) => x.id !== businessId);
-  log(s, 'money', `${def.name} de ${d.name} revendu(e) pour ${fmt(refund)}.`);
+  log(s, 'money', `${bizName(b)} de ${d.name} revendu(e) pour ${fmt(refund)}.`);
   return ok;
 }
 
@@ -208,8 +207,8 @@ export function heatForecast(s: GameState) {
     let legal = 0;
     for (const b of d.businesses) {
       const def = BUSINESSES[b.kind];
-      if (def.illegal) illegal += s.lowProfile ? 0 : def.heat * (d.bribedCop ? 0.5 : 1);
-      else legal += def.heat;
+      if (def.illegal) illegal += s.lowProfile ? 0 : bizHeat(b) * (d.bribedCop ? 0.5 : 1);
+      else legal += bizHeat(b);
     }
     if (illegal) lines.push({ label: `Commerces illégaux · ${d.name}${d.bribedCop ? ' (sergent payé, ÷2)' : ''}`, value: illegal, sure: true });
     if (legal) lines.push({ label: `Façades légales · ${d.name}`, value: legal, sure: true });
@@ -530,8 +529,7 @@ function economy(s: GameState) {
   s.heat = clamp(s.heat + heat, 0, 100);
 
   // respect
-  const respectGain = Math.floor(owned(s).length / 3) +
-    owned(s).reduce((t, d) => t + d.businesses.filter((b) => b.kind === 'restaurant').length, 0);
+  const respectGain = Math.floor(owned(s).length / 3) + respectFromBuildings(s);
   s.respect = clamp(s.respect + respectGain + (donHasTalent(s, 'p_respect') ? 1 : 0), 0, 150);
 }
 
@@ -690,7 +688,7 @@ function crewTurn(s: GameState, raided: Set<string>) {
   for (const m of [...s.members]) {
     if ((m.fatigue ?? 0) > 0) m.fatigue!--;
     if (m.status !== 'actif') {
-      m.statusWeeks -= m.status === 'blessé' && medic ? 2 : 1;
+      m.statusWeeks -= m.status === 'blessé' && medic ? 2 : m.status === 'prison' && owns(s, 'planque', memberCity(m)) ? 2 : 1;
       if (m.statusWeeks <= 0) {
         m.status = 'actif';
         log(s, 'neutral', `${m.nickname} est de retour.`);

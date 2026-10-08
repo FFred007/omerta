@@ -14,7 +14,20 @@ export type BusinessKind =
   | 'blanchisserie'
   | 'restaurant'
   | 'garage'
-  | 'entrepot';
+  | 'entrepot'
+  | 'hotel'
+  | 'jazz'
+  | 'cinema'
+  | 'taxis'
+  | 'credit'
+  | 'imprimerie'
+  | 'usurier'
+  | 'boxe'
+  | 'armurerie'
+  | 'planque'
+  | 'quai'
+  | 'casino'
+  | 'lobby';
 
 export interface BusinessDef {
   kind: BusinessKind;
@@ -28,11 +41,19 @@ export interface BusinessDef {
   heat: number; // heat ajoutée chaque semaine
   desc: string;
   storage?: number; // capacité de stockage d'alcool ajoutée
+  /** réservé à une ville */
+  city?: string;
+  /** respect minimum pour construire */
+  minRespect?: number;
+  /** effet spécial résumé pour l'interface */
+  special?: string;
 }
 
 export interface Business {
   id: number;
   kind: BusinessKind;
+  /** 2 = amélioré */
+  level?: number;
 }
 
 export interface District {

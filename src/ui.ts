@@ -1,5 +1,5 @@
 import {
-  BUSINESSES, COP_BRIBE, COUNCIL_BRIBE, ESCORTS, GOOD_ORDER, GOODS, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE_COST, SPEAKEASY_DEMAND,
+  BUSINESSES, COP_BRIBE, COUNCIL_BRIBE, ESCORTS, GOOD_ORDER, GOODS, JUDGE_BRIBE, PROMOTE_COST, SPEAKEASY_DEMAND,
   CITIES, TARIFFS, TIERS, cityDef, dayLabel, rankOf, tierOf, weekLabel,
 } from './data';
 import * as CT from './cities';
@@ -9,6 +9,8 @@ import * as BD from './bonds';
 import * as HU from './hunters';
 import * as HE from './heist';
 import { activeVendettas } from './vendetta';
+import * as BL from './buildings';
+import { SLOT_MAX, UPGRADES } from './data';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
 import * as B from './booze';
@@ -16,7 +18,7 @@ import * as D from './diplomacy';
 import * as E from './engine';
 import { resolveEvent } from './events';
 import { DON_TRAITS, TRAITS, rankTitle, xpForNext, type TraitId } from './traits';
-import { BRANCHES, DON_STATS, STAT_CAP, TALENTS, ageOf, canLearn, donOf, donXpForNext, learnTalent, spendPoint, type Branch, type DonStat, type TalentId } from './don';
+import { BRANCHES, DON_STATS, STAT_CAP, TALENTS, ageOf, canLearn, donOf, donXpForNext, launderFee, learnTalent, spendPoint, type Branch, type DonStat, type TalentId } from './don';
 import * as F from './family';
 import { portrait, seedOf } from './portraits';
 import * as NET from './network';
@@ -89,6 +91,9 @@ function ownerName(o: Owner) {
 const SHORT: Record<BusinessKind, string> = {
   speakeasy: 'Bar', tripot: 'Jeu', distillerie: 'Alambic', paris: 'Paris',
   blanchisserie: 'Lavoir', restaurant: 'Resto', garage: 'Garage', entrepot: 'Dépôt',
+  hotel: 'Hôtel', jazz: 'Jazz', cinema: 'Ciné', taxis: 'Taxis', credit: 'Banque',
+  imprimerie: 'Faux $', usurier: 'Usure', boxe: 'Boxe', armurerie: 'Armes', planque: 'Planque',
+  quai: 'Quai', casino: 'Casino', lobby: 'Lobby',
 };
 const moodTone = (sat: number) => (sat < 30 ? 'var(--oxblood-bright)' : sat < 45 ? 'var(--brass)' : sat < 70 ? 'var(--ivory-dim)' : 'var(--good)');
 
@@ -302,7 +307,7 @@ function mapView() {
       const order = s.orders.find((o) => o.districtId === d.id);
       const men = mine ? membersIn(s, d.id).length : 0;
       const chips = d.businesses
-        .map((b) => `<span class="chip ${BUSINESSES[b.kind].illegal ? 'illegal' : 'legal'}">${SHORT[b.kind]}</span>`)
+        .map((b) => `<span class="chip ${BUSINESSES[b.kind].illegal ? 'illegal' : 'legal'}">${SHORT[b.kind]}${BL.lvl(b) >= 2 ? '★' : ''}</span>`)
         .join('');
       const sat = satisfaction(d);
       const extra = [
@@ -396,7 +401,7 @@ function weekCard() {
         <h4 class="clean">Argent propre</h4>
         <div class="ledger-rows">
           ${row('Commerces légaux', f.cleanIn, 'clean')}
-          ${row(`Blanchiment (−${Math.round(LAUNDER_FEE * 100)} % de commission)`, f.launderGiven, 'clean')}
+          ${row(`Blanchiment (−${Math.round(launderFee(s) * 100)} % de commission)`, f.launderGiven, 'clean')}
           ${row('Salaires (faute de sale)', -f.salClean, 'clean')}
           ${row('Enveloppes', -f.bribes, 'clean')}
           <span class="total">Bilan</span><span class="num total ${f.cleanNet < 0 ? 'danger' : 'clean'}">${sign(f.cleanNet)}</span>
@@ -546,34 +551,55 @@ function businessList(d: District, mine: boolean) {
   return `<div class="rows">${d.businesses
     .map((b) => {
       const def = BUSINESSES[b.kind];
-      let inc = '';
+      const income = BL.bizIncome(s, d, b);
+      const parts: string[] = [];
       if (b.kind === 'speakeasy' || b.kind === 'tripot') {
         const list = outlets.filter((o) => o.kind === b.kind);
         const o = list[b.kind === 'speakeasy' ? speakIdx++ : tripIdx++];
         const sold = o ? GOOD_ORDER.reduce((t, g) => t + (o.sold[g] ?? 0), 0) : 0;
-        inc = `<span class="dirty">${money(def.income)} fixe${mine ? ` + ${sold}/${o?.demand ?? 0} caisses vendues (${money(o?.revenue ?? 0)})` : ''}</span>`;
-      } else if (b.kind === 'distillerie') inc = `<span class="dirty">+${b.kind === 'distillerie' && d.id === 'docks' ? 50 : 25} caisses de gin / sem.</span>`;
-      else if (def.illegal) inc = `<span class="dirty">+${money(def.income)} sale</span>`;
-      else inc = `<span class="clean">blanchit ${money(def.launder)}${def.income ? `, +${money(def.income)} propre` : ''}${def.storage ? `, +${def.storage} caisses de stockage` : ''}</span>`;
-      return `<div class="row"><div class="grow">${def.name}<small>${inc}</small></div>
-        ${mine ? `<button class="btn small" data-act="sell" data-id="${b.id}">Revendre ${money(def.cost * 0.4)}</button>` : ''}</div>`;
+        parts.push(`<span class="dirty">${money(income)} fixe${mine ? ` + ${sold}/${o?.demand ?? 0} caisses vendues (${money(o?.revenue ?? 0)})` : ''}</span>`);
+      } else if (b.kind === 'distillerie') parts.push(`<span class="dirty">+${BL.ginOf(d, b)} caisses de gin / sem.</span>`);
+      else if (def.illegal && income) parts.push(`<span class="dirty">+${money(income)} sale</span>`);
+      else if (!def.illegal) {
+        if (income) parts.push(`<span class="clean">+${money(income)} propre</span>`);
+        if (BL.bizLaunder(b)) parts.push(`<span class="clean">blanchit ${money(BL.bizLaunder(b))}</span>`);
+      }
+      if (def.storage) parts.push(`+${def.storage} caisses de stockage`);
+      if (def.special) parts.push(esc(def.special));
+      const h = BL.bizHeat(b);
+      if (h) parts.push(`<span class="${h > 0 ? 'danger' : 'clean'}">${h > 0 ? '+' : ''}${h} heat</span>`);
+      const up = UPGRADES[b.kind];
+      const canUp = mine && up && BL.lvl(b) < 2;
+      return `<div class="row"><div class="grow">${esc(BL.bizName(b))}${BL.lvl(b) >= 2 ? ' <span class="rank">niveau 2</span>' : ''}<small>${parts.join(' · ')}</small>
+          ${canUp ? `<small class="muted">Amélioration : ${esc(up!.name)} — ${esc(up!.desc)}</small>` : ''}</div>
+        ${canUp ? `<button class="btn small" data-act="upgrade" data-id="${b.id}" ${(up!.currency === 'dirty' ? s.dirty : s.clean) >= up!.cost ? '' : 'disabled'}>Améliorer · ${money(up!.cost)} ${up!.currency === 'dirty' ? 'sale' : 'propre'}</button>` : ''}
+        ${mine ? `<button class="btn small" data-act="sell" data-id="${b.id}">Revendre ${money(BL.resale(b))}</button>` : ''}</div>`;
     })
     .join('')}</div>`;
+}
+
+function buildCard(d: District, k: BusinessKind) {
+  const def = BUSINESSES[k];
+  const why = BL.buildBlocker(s, d, k);
+  const tag = def.city ? `<span class="tag">${esc(CT.cityName(def.city))}</span>` : def.minRespect ? `<span class="tag">${def.minRespect} respect</span>` : '';
+  return `<button class="build" data-act="build" data-id="${k}" ${why ? 'disabled' : ''} title="${esc(why ?? def.desc)}">
+    <b>${def.name}</b>${tag}<span>${def.desc}</span>
+    <span class="num ${def.currency}">${money(def.cost)} ${def.currency === 'dirty' ? 'sale' : 'propre'}</span></button>`;
 }
 
 function ownDistrict(d: District) {
   const men = membersIn(s, d.id);
   const reserve = activeMembers(s).filter((m) => m.assignment !== d.id && CT.memberCity(m) === CT.cityOf(d));
   const full = d.businesses.length >= d.slots;
-  const builds = (Object.keys(BUSINESSES) as BusinessKind[])
-    .map((k) => {
-      const def = BUSINESSES[k];
-      const can = !full && (def.currency === 'dirty' ? s.dirty : s.clean) >= def.cost;
-      return `<button class="build" data-act="build" data-id="${k}" ${can ? '' : 'disabled'}>
-        <b>${def.name}</b><span>${def.desc}</span>
-        <span class="num ${def.currency}">${money(def.cost)} ${def.currency === 'dirty' ? 'sale' : 'propre'}</span></button>`;
-    })
-    .join('');
+  const kinds = (Object.keys(BUSINESSES) as BusinessKind[]).filter((k) => !BUSINESSES[k].city || BUSINESSES[k].city === CT.cityOf(d));
+  const group = (title: string, list: BusinessKind[]) => (list.length ? `<h5 class="build-group">${title}</h5><div class="build-grid">${list.map((k) => buildCard(d, k)).join('')}</div>` : '');
+  const builds = group('Illégal · argent sale', kinds.filter((k) => BUSINESSES[k].illegal && !BUSINESSES[k].city))
+    + group('Légal · argent propre et blanchiment', kinds.filter((k) => !BUSINESSES[k].illegal && !BUSINESSES[k].city))
+    + group(`Propre à ${esc(CT.cityName(CT.cityOf(d)))}`, kinds.filter((k) => !!BUSINESSES[k].city));
+  const slotCost = BL.slotCost(d);
+  const slotBtn = d.slots < SLOT_MAX
+    ? `<button class="btn small" data-act="slot" ${s.clean >= slotCost ? '' : 'disabled'} title="Permis de construire et enveloppes à la mairie">Agrandir : ${d.slots + 1}e emplacement · ${money(slotCost)} propre</button>`
+    : '<span class="muted">Emplacements au maximum</span>';
   const sat = satisfaction(d);
   const tariffs = (Object.keys(TARIFFS) as Tariff[]).map((k) =>
     `<button class="btn small ${d.tariff === k ? 'on' : ''}" data-act="tariff" data-id="${k}" aria-pressed="${d.tariff === k}">${TARIFFS[k].name} ×${TARIFFS[k].mult.toLocaleString('fr-FR')}</button>`).join('');
@@ -589,8 +615,9 @@ function ownDistrict(d: District) {
     <p class="note">Bas : +5 satisfaction/sem. · Normal : +1 · Élevé : −5. Sous 30, ils cachent leur argent (protection ×0,6), attirent les descentes et finissent par te dénoncer. À 70 et plus, ils te couvrent face aux Prohis.</p>
     <h4>Établissements</h4>
     ${businessList(d, true)}
-    <h4>Ouvrir un établissement ${full ? '<span class="muted">(quartier plein)</span>' : ''}</h4>
-    <div class="build-grid">${builds}</div>
+    <h4>Ouvrir un établissement · ${d.businesses.length}/${d.slots} emplacements ${full ? '<span class="muted">(quartier plein)</span>' : ''}</h4>
+    <div class="diplo">${slotBtn}</div>
+    ${builds}
     <h4>Hommes postés ici</h4>
     ${men.length ? `<div class="rows">${men.map((m) => `<div class="row"><div class="grow">${esc(m.name)} « ${esc(m.nickname)} »${m.rank === 'capo' ? ' <span class="muted">(capo, +20 % revenus)</span>' : ''}<small>Force ${m.force} · Loyauté ${m.loyalty} · ${busyLabel(m)}</small></div>
       <button class="btn small" data-act="assign" data-id="${m.id}" data-to="">Rappeler</button></div>`).join('')}</div>`
@@ -659,8 +686,7 @@ function businessPanel() {
   const pending = pendingCrates(s);
   const room = B.freeRoom(s);
   const plan = salesPlan(s);
-  const speak = owned(s).reduce((t, d) => t + d.businesses.filter((b) => b.kind === 'speakeasy').length, 0);
-  const demand = speak * SPEAKEASY_DEMAND + plan.outlets.filter((o) => o.kind === 'tripot').length * 5;
+  const demand = plan.outlets.reduce((t, o) => t + o.demand, 0);
   const bestRetail = (g: Good) => {
     const ds = owned(s).filter((d) => d.businesses.some((b) => b.kind === 'speakeasy'));
     return ds.length ? Math.max(...ds.map((d) => retailPrice(d, g))) : GOODS[g].retail;
@@ -1444,6 +1470,8 @@ app.addEventListener('click', (ev) => {
       return;
     case 'build': return run(E.build(s, ui.selected, id as BusinessKind));
     case 'sell': return run(E.sellBusiness(s, ui.selected, Number(id)));
+    case 'upgrade': return run(BL.upgrade(s, district(s, ui.selected), Number(id)));
+    case 'slot': return run(BL.buySlot(s, district(s, ui.selected)));
     case 'tariff': return run(setTariff(s, ui.selected, id as Tariff));
     case 'cop': return run(E.toggleCop(s, id));
     case 'judge': return run(E.toggleJudge(s));

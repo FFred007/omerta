@@ -627,3 +627,6 @@ select {
 @media (max-width: 420px) {
   .clock-bar .seg .btn { padding: 4px 7px; }
 }
+
+.build-group { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ivory-dim); margin: 12px 0 6px; font-weight: 700; }
+.build .tag { float: right; font-size: 10.5px; padding: 0 5px; margin-left: 4px; }

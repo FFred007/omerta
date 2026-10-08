@@ -1,5 +1,6 @@
 // Le Don : un membre spécial de la famille (force = Poigne, discrétion = Ombre, + Verbe et Flair).
 // Il gagne des points à placer lui-même : stats ou talents des trois branches.
+import { owns } from './buildings';
 import type { GameState, Member } from './types';
 
 export const YEAR_WEEKS = 6; // 1 an de vie = 6 semaines de jeu
@@ -84,7 +85,7 @@ export function makeDon(id: number, seed: number): Member {
   };
 }
 
-export const launderFee = (s: GameState) => (donHasTalent(s, 'r_comptes') ? 0.08 : 0.15);
+export const launderFee = (s: GameState) => Math.max(0.03, (donHasTalent(s, 'r_comptes') ? 0.08 : 0.15) - (owns(s, 'credit') ? 0.05 : 0));
 /** Bonus de ventes au comptoir grâce au Flair du Don (au-dessus de 5) */
 export const flairBonus = (s: GameState) => {
   const d = donOf(s);

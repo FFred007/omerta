@@ -15,7 +15,8 @@ function bodyguards(s: GameState) {
   const don = donOf(s);
   if (!don) return 0;
   const guards = s.members.filter((m) => m.status === 'actif' && !m.isDon && m.assignment === don.assignment);
-  return don.force + guards.reduce((t, m) => t + m.force, 0) / 2;
+  const safe = s.districts.find((d) => d.id === don.assignment)?.businesses.some((b) => b.kind === 'planque') ? 5 : 0;
+  return don.force + guards.reduce((t, m) => t + m.force, 0) / 2 + safe;
 }
 const killers = (s: GameState, rid: string) => Math.max(6, (rival(s, rid)?.strength ?? 10) * 0.45);
 

@@ -43,7 +43,92 @@ export const BUSINESSES: Record<BusinessKind, BusinessDef> = {
     income: 0, launder: 200, heat: 0, storage: 80,
     desc: '+80 caisses de stockage. Officiellement, des pièces détachées.',
   },
+  // ----- légal -----
+  hotel: {
+    kind: 'hotel', name: 'Hôtel', illegal: false, cost: 6000, currency: 'clean',
+    income: 600, launder: 400, heat: 0, special: '+1 respect / semaine',
+    desc: 'Un palace avec groom et lustres. Gros revenu propre, blanchit, et +1 respect par semaine.',
+  },
+  jazz: {
+    kind: 'jazz', name: 'Club de jazz', illegal: false, cost: 4000, currency: 'clean',
+    income: 350, launder: 0, heat: 1, special: '+2 satisfaction des commerçants du quartier',
+    desc: 'Le quartier vit la nuit : commerçants ravis (+2/sem.). On y boit en douce (+1 heat).',
+  },
+  cinema: {
+    kind: 'cinema', name: 'Cinéma', illegal: false, cost: 3500, currency: 'clean',
+    income: 300, launder: 300, heat: -1,
+    desc: 'Les films parlants remplissent la salle. Propre, blanchit, et calme la presse (−1 heat).',
+  },
+  taxis: {
+    kind: 'taxis', name: 'Compagnie de taxis', illegal: false, cost: 3000, currency: 'clean',
+    income: 200, launder: 400, heat: 0, special: 'Livraisons de contrebande −10 % de risque',
+    desc: 'Des chauffeurs qui connaissent chaque ruelle. Blanchit et sécurise tes livraisons.',
+  },
+  credit: {
+    kind: 'credit', name: 'Caisse de crédit', illegal: false, cost: 12000, currency: 'clean', minRespect: 60,
+    income: 900, launder: 0, heat: 0, special: 'Commission de blanchiment −5 points',
+    desc: 'Ta propre banque. Gros revenu propre, et ton argent sale se blanchit moins cher.',
+  },
+  // ----- illégal -----
+  imprimerie: {
+    kind: 'imprimerie', name: 'Imprimerie de faux billets', illegal: true, cost: 3500, currency: 'dirty',
+    income: 700, launder: 0, heat: 2, special: '+1 au dossier fédéral / semaine',
+    desc: 'Des billets de 20 plus vrais que nature. Rentable, mais la fausse monnaie est un crime fédéral.',
+  },
+  usurier: {
+    kind: 'usurier', name: 'Usurier', illegal: true, cost: 2000, currency: 'dirty',
+    income: 200, launder: 0, heat: 1, special: 'Revenu selon la satisfaction des commerçants, qu’il fait baisser (−2/sem.)',
+    desc: 'Prêts à 40 % la semaine. Rapporte 200 $ + 8 $ par point de satisfaction du quartier, mais les étrangle.',
+  },
+  boxe: {
+    kind: 'boxe', name: 'Salle de boxe', illegal: true, cost: 2200, currency: 'dirty',
+    income: 300, launder: 0, heat: 1, special: 'Recrues : +1 force',
+    desc: 'Paris sur les combats, et des gamins qui cognent : tes recrues arrivent avec +1 en force.',
+  },
+  armurerie: {
+    kind: 'armurerie', name: 'Armurerie clandestine', illegal: true, cost: 2800, currency: 'dirty',
+    income: 0, launder: 0, heat: 1, special: '+1 puissance par homme posté ici qui part à l’assaut, +4 défense',
+    desc: 'Mitraillettes Thompson et grenades. Tes hommes postés ici frappent plus fort (+1 chacun) ; +4 défense.',
+  },
+  planque: {
+    kind: 'planque', name: 'Planque', illegal: true, cost: 2500, currency: 'dirty',
+    income: 0, launder: 0, heat: 0, special: 'Prison −1 sem. de plus par semaine dans la ville, Don mieux gardé',
+    desc: 'Avocats, faux témoins et sous-sol blindé. Tes hommes sortent plus vite de prison ; le Don posté ici est mieux protégé.',
+  },
+  // ----- une par ville -----
+  quai: {
+    kind: 'quai', name: 'Quai privé', illegal: false, cost: 4000, currency: 'clean', city: 'halloran',
+    income: 0, launder: 200, heat: 0, storage: 60, special: 'Contrebande −10 %',
+    desc: 'Ton propre ponton dans le brouillard : +60 caisses de stockage et contrebande 10 % moins chère.',
+  },
+  casino: {
+    kind: 'casino', name: 'Casino', illegal: true, cost: 15000, currency: 'dirty', city: 'mirage',
+    income: 2500, launder: 0, heat: 3,
+    desc: 'Roulette, black-jack et machines à sous. Le gros lot de Mirage Springs.',
+  },
+  lobby: {
+    kind: 'lobby', name: 'Cabinet de lobbying', illegal: false, cost: 8000, currency: 'clean', city: 'washburn',
+    income: 200, launder: 0, heat: 0, special: '−2 au dossier fédéral / semaine',
+    desc: 'Des avocats qui déjeunent avec des sénateurs. Ton dossier fédéral fond de 2 par semaine.',
+  },
 };
+
+/** Améliorations : un bâtiment de niveau 1 passe au niveau 2 */
+export interface UpgradeDef { name: string; cost: number; currency: 'dirty' | 'clean'; desc: string }
+export const UPGRADES: Partial<Record<BusinessKind, UpgradeDef>> = {
+  speakeasy: { name: 'Club chic', cost: 2500, currency: 'dirty', desc: 'Vend 30 caisses au lieu de 18, 15 % plus cher, 300 $ d’entrée ; +1 heat' },
+  tripot: { name: 'Salle de jeu de luxe', cost: 4000, currency: 'dirty', desc: 'Revenus ×1,6 si un capo est posté dans le quartier' },
+  distillerie: { name: 'Grande distillerie', cost: 3500, currency: 'dirty', desc: '45 caisses de gin au lieu de 25 (×2 aux Docks)' },
+  paris: { name: 'Réseau de paris', cost: 2000, currency: 'dirty', desc: '700 $ au lieu de 400' },
+  blanchisserie: { name: 'Blanchisserie industrielle', cost: 3000, currency: 'clean', desc: 'Blanchit 1 600 au lieu de 900' },
+  restaurant: { name: 'Restaurant gastronomique', cost: 3500, currency: 'clean', desc: '500 $ propres, blanchit 700, +1 respect de plus' },
+  hotel: { name: 'Grand hôtel', cost: 7000, currency: 'clean', desc: '1 100 $ propres, blanchit 700' },
+  casino: { name: 'Casino-palace', cost: 12000, currency: 'dirty', desc: '4 000 $ par semaine au lieu de 2 500 ; +1 heat' },
+};
+
+/** Prix d'un emplacement de plus (permis de construire et pots-de-vin), en propre */
+export const SLOT_MAX = 5;
+export const SLOT_COST: Record<number, number> = { 1: 1500, 2: 2500, 3: 5000, 4: 8000 };
 
 // ---------- Alcool ----------
 export interface GoodDef { id: Good; name: string; plural: string; base: number; retail: number }

@@ -47,6 +47,7 @@ export function shopsTick(s: GameState) {
       if (donHasTalent(s, 'p_commercants')) delta += 1;
       if (spouseHas(s, 'quartier')) delta += 1;
       if (isActive(s, 'cure')) delta += 1;
+      delta += d.businesses.filter((b) => b.kind === 'jazz').length * 2 - d.businesses.filter((b) => b.kind === 'usurier').length * 2;
       shop.satisfaction = clamp(shop.satisfaction + delta, 0, 100);
     }
     const sat = satisfaction(d);

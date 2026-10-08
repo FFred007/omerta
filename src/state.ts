@@ -1,6 +1,6 @@
 import {
-  BASE_STORAGE, BUSINESSES, DISTILLERY_GIN, DISTRICT_SEEDS, FIRST_NAMES, GOOD_ORDER, GOODS, LAST_NAMES, NICKNAMES,
-  RIVAL_SEEDS, SHOP_NAMES, SHOP_TRADES, SPEAKEASY_DEMAND, TARIFFS, TRIPOT_WHISKY,
+  BASE_STORAGE, BUSINESSES, DISTRICT_SEEDS, FIRST_NAMES, GOOD_ORDER, GOODS, LAST_NAMES, NICKNAMES,
+  RIVAL_SEEDS, SHOP_NAMES, SHOP_TRADES, TARIFFS, TRIPOT_WHISKY,
 } from './data';
 import type { District, GameState, Good, Member, Owner, Recruit, LogTone, Shop } from './types';
 import { TRAITS, donHas, donStartTraits, familyCount, familyHas, gainXp, has, rankTitle, rollRecruitTraits } from './traits';
@@ -12,10 +12,9 @@ import { cityMult, cityOf } from './cities';
 import { initCommission } from './commission';
 import { teamBondBonus } from './bonds';
 import { generateMap } from './mapgen';
+import { bizHeat, bizIncome, bizLaunder, bizStorage, ginOf, owns, retailMult, speakDemand } from './buildings';
 
 export const SAVE_KEY = 'omerta-save-v2';
-/** tripots de Mirage Springs */
-export const MIRAGE_TRIPOT = 1.5;
 export const SAVE_VERSION = 2;
 
 // ---------- RNG ----------
@@ -45,7 +44,7 @@ function randomIdentity(s: GameState) {
 export function makeRecruit(s: GameState): Recruit {
   // parfois un ancien de Chicago ou de Detroit, déjà aguerri
   const level = Math.random() < 0.15 ? randInt(1, 3) : 0;
-  const force = Math.min(12, randInt(2, 8) + Math.ceil(level / 2));
+  const force = Math.min(12, randInt(2, 8) + Math.ceil(level / 2) + (owns(s, 'boxe') ? 1 : 0));
   const discretion = Math.min(12, randInt(2, 8) + Math.floor(level / 2));
   const quality = force + discretion;
   const traits = rollRecruitTraits();
@@ -277,7 +276,7 @@ export const onAttack = (s: GameState, memberId: number) => s.orders.find((o) =>
 
 /** Défense d'un quartier (pour le joueur : hommes postés, hors ceux engagés en attaque) */
 export function defenseOf(s: GameState, d: District): number {
-  const garageBonus = d.businesses.filter((b) => b.kind === 'garage').length * 5;
+  const garageBonus = d.businesses.filter((b) => b.kind === 'garage').length * 5 + d.businesses.filter((b) => b.kind === 'armurerie').length * 4;
   if (d.owner === 'player') {
     const men = membersIn(s, d.id).filter((m) => !committedToAttack(s, m.id));
     return 4 + (d.id === 'sicily' ? 6 : 0) + garageBonus + men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'roc') ? 3 : 0), 0);
@@ -291,7 +290,8 @@ export function defenseOf(s: GameState, d: District): number {
 
 export function attackPower(s: GameState, memberIds: number[]): number {
   const men = s.members.filter((m) => memberIds.includes(m.id));
-  const base = men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'tireur') ? 3 : 0) + (has(m, 'tetebrulee') ? 3 : 0) - (has(m, 'trouillard') ? 2 : 0), 0);
+  const armed = (m: Member) => (m.assignment && s.districts.find((d) => d.id === m.assignment)?.businesses.some((b) => b.kind === 'armurerie') ? 1 : 0);
+  const base = men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'tireur') ? 3 : 0) + (has(m, 'tetebrulee') ? 3 : 0) - (has(m, 'trouillard') ? 2 : 0) + armed(m), 0);
   return Math.max(0, Math.round(base + donPresence(s, men) + s.respect / 20 + teamBondBonus(s, memberIds)));
 }
 
@@ -323,7 +323,7 @@ export function winChance(power: number, def: number): number {
 }
 
 export function storageCap(s: GameState) {
-  return BASE_STORAGE + owned(s).reduce((t, d) => t + d.businesses.reduce((u, b) => u + (BUSINESSES[b.kind].storage ?? 0), 0), 0);
+  return BASE_STORAGE + owned(s).reduce((t, d) => t + d.businesses.reduce((u, b) => u + bizStorage(b), 0), 0);
 }
 export const stockTotal = (s: GameState) => GOOD_ORDER.reduce((t, g) => t + s.stock[g], 0);
 export const pendingCrates = (s: GameState) => s.shipments.reduce((t, x) => t + x.qty, 0);
@@ -364,7 +364,7 @@ export function salesPlan(s: GameState): SalesPlan {
   let produced = 0;
   if (!s.lowProfile) {
     for (const d of owned(s)) {
-      for (const b of d.businesses) if (b.kind === 'distillerie') produced += DISTILLERY_GIN * (d.id === 'docks' ? 2 : 1);
+      for (const b of d.businesses) if (b.kind === 'distillerie') produced += ginOf(d, b);
     }
   }
   const room = Math.max(0, storageCap(s) - GOOD_ORDER.reduce((t, g) => t + stock[g], 0));
@@ -379,7 +379,7 @@ export function salesPlan(s: GameState): SalesPlan {
     for (const d of owned(s)) {
       for (const b of d.businesses) {
         if (b.kind !== 'speakeasy' && b.kind !== 'tripot') continue;
-        const demand = b.kind === 'speakeasy' ? SPEAKEASY_DEMAND : TRIPOT_WHISKY;
+        const demand = b.kind === 'speakeasy' ? speakDemand(b) : TRIPOT_WHISKY;
         const goods: Good[] = b.kind === 'speakeasy' ? GOOD_ORDER : ['whisky'];
         const o: OutletSale = { districtId: d.id, kind: b.kind, sold: {}, revenue: 0, demand };
         let left = demand;
@@ -390,7 +390,7 @@ export function salesPlan(s: GameState): SalesPlan {
           sold[g] += q;
           left -= q;
           o.sold[g] = q;
-          o.revenue += q * retailPrice(d, g);
+          o.revenue += Math.round(q * retailPrice(d, g) * retailMult(b));
         }
         if (b.kind === 'speakeasy') shortage += left;
         revenue += o.revenue;
@@ -419,12 +419,12 @@ export function projection(s: GameState) {
     for (const b of d.businesses) {
       const def = BUSINESSES[b.kind];
       if (def.illegal) {
-        if (!s.lowProfile) f += def.income * (b.kind === 'tripot' && cityOf(d) === 'mirage' ? MIRAGE_TRIPOT : 1);
-        heatGain += s.lowProfile ? 0 : def.heat * (d.bribedCop ? 0.5 : 1);
+        if (!s.lowProfile) f += bizIncome(s, d, b);
+        heatGain += s.lowProfile ? 0 : bizHeat(b) * (d.bribedCop ? 0.5 : 1);
       } else {
-        cleanIn += def.income;
-        launderCap += def.launder;
-        heatGain += def.heat;
+        cleanIn += bizIncome(s, d, b);
+        launderCap += bizLaunder(b);
+        heatGain += bizHeat(b);
       }
     }
     const sales = plan.outlets.filter((o) => o.districtId === d.id).reduce((t, o) => t + o.revenue, 0);
