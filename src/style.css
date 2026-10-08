@@ -647,3 +647,6 @@ select {
 .checklist li.done { color: var(--clean); }
 .checklist li.done::before { content: '● '; color: var(--good); }
 @media (max-width: 520px) { .setup-names { grid-template-columns: 1fr; } }
+
+.paths { display: grid; gap: 8px; }
+.paths .job p { margin: 4px 0; }

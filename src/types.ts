@@ -543,5 +543,11 @@ export interface Career {
   dying?: boolean;
   lost?: string; // nom du capo qui a pris la place du Don à la place du joueur
   path?: 'succession' | 'coup' | 'trahison';
+  /** complot en cours : il se joue la nuit de dimanche indiquée */
+  plot?: { kind: 'coup' | 'feds' | 'rival'; week: number; rival?: string } | null;
+  /** devenu Don en livrant l'ancien aux fédéraux */
+  informant?: boolean;
+  /** famille rivale à qui le joueur doit le trône */
+  debtTo?: string;
   history: { week: number; text: string }[];
 }

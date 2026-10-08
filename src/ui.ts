@@ -1267,7 +1267,7 @@ function missionsPanel() {
       <label class="check"><input type="checkbox" data-act="mission" data-id="${m.id}" ${m.accepted ? 'checked' : ''} ${p?.status !== 'actif' ? 'disabled' : ''}><span><b>Accepter la mission</b> <span class="muted">· refuser coûte 1 de confiance</span></span></label>
       ${m.accepted && crewOk && crewPool.length ? `<div class="team">${crewPool.map((x) => `<label class="check"><input type="checkbox" data-act="mission-crew" data-job="${m.id}" data-id="${x.id}" ${m.crew.includes(x.id) ? 'checked' : ''}><span>${esc(x.nickname)} <span class="muted">· ${m.stat === 'force' ? 'F' : 'D'}${m.stat === 'force' ? x.force : x.discretion} (compte pour moitié)</span></span></label>`).join('')}</div>` : ''}
       ${m.accepted && r !== 'capo' ? `<label class="check"><input type="checkbox" data-act="mission-skim" data-id="${m.id}" ${m.skim ? 'checked' : ''}><span>Te servir dans la caisse <span class="muted">· +${Math.round(CA.SKIM_BONUS * 100)} % pour toi, ${pct(CA.skimRisk(s))} d’être découvert (confiance −20, tu perds tout)</span></span></label>` : ''}
-      <div class="odds" style="--odds:${oddsTone(ch)}">Toi${m.crew.length ? ' et tes hommes' : ''} <b class="num">${skill}</b> contre <b class="num">${m.difficulty}</b> · <b style="color:${oddsTone(ch)}">${pct(ch)}</b></div>
+      <div class="odds" style="--odds:${oddsTone(ch)}">Toi${m.crew.length ? ' et tes hommes' : ''} <b class="num">${skill}</b> contre <b class="num">${m.difficulty}</b> · <b style="color:${oddsTone(ch)}">${pct(ch)}</b>${ch < 0.05 ? ` <span class="muted">· hors de portée : il te faudrait au moins ${Math.ceil(m.difficulty * 0.6)} en ${CA.STAT_LABEL[m.stat]}${CA.missionCrewAllowed(m) ? ', ou des hommes avec toi' : ''}</span>` : ''}</div>
     </article>`;
   }).join('');
   const kick = r === 'capo' ? `<div class="launder" role="group" aria-label="Tribut au Don"><span>Tribut au Don <span class="muted">· ta part des revenus du quartier</span></span><span class="seg">
@@ -1308,8 +1308,43 @@ function relationsPanel() {
     <h3>La famille ${esc(s.familyName.replace(/^Famille /, ''))}</h3>
     <p class="flavor">Le Don, son consigliere, les capos et les anciens. Leur affinité décide de ta carrière, et à la mort du Don, ils votent : il te faudra ${t.needed} voix sur ${t.voters.length} contre ${esc(t.fav?.name ?? 'le favori')}. Les cadeaux, les services rendus et un bon mariage font monter l'affinité ; le Verbe la fait monter plus vite.</p>
     <div class="facts"><span>Voix pour toi aujourd'hui <b>${t.mine.length}/${t.voters.length}</b></span><span>Santé du Don <b>${c.donHealth}/100</b></span>${c.lost ? `<span>Don actuel <b>${esc(c.lost)}</b></span>` : ''}</div>
+    ${powerBlock()}
     ${rows}`;
 }
+function powerBlock() {
+  const c = s.career!;
+  if (c.rank !== 'capo') return `<p class="note">Une fois capo, trois chemins mèneront au trône : attendre la succession, prendre le pouvoir par la force, ou trahir.</p>`;
+  if (c.plot) {
+    const what = c.plot.kind === 'coup' ? 'Coup d’État' : c.plot.kind === 'feds' ? 'Marché avec les fédéraux' : `Pacte avec ${esc(rival(s, c.plot.rival ?? '')?.name ?? 'un rival')}`;
+    const when = c.plot.week - s.week;
+    return `<div class="promo danger-banner"><b>${what} en cours</b><p class="note">Il se joue ${when <= 0 ? 'dimanche soir' : `dans ${when + 1} semaines`}.</p>
+      ${c.plot.kind !== 'feds' ? '<button class="btn small" data-act="plot-cancel">Renoncer</button>' : ''}</div>`;
+  }
+  const why = CA.plotBlocker(s);
+  const conj = CA.conspirators(s);
+  const coup = CA.coupChance(s);
+  const cands = CA.pactCandidates(s);
+  return `<h4>Prendre le pouvoir</h4>
+  <div class="paths">
+    <article class="job"><div class="job-head"><b>La succession</b><span class="tag">attendre</span></div>
+      <p>Le Don a ${c.donHealth}/100 de santé. À sa mort, il te faudra ${CA.successionTally(s).needed} voix. C'est la voie la plus sûre, et les hommes de la famille te suivront avec plus de loyauté.</p></article>
+    <article class="job"><div class="job-head"><b>Le coup d'État</b><span class="tag">la force</span></div>
+      <p>Tu frappes pendant le dîner de dimanche. Toi, la moitié de la force de tes hommes, et 5 par conjuré (capos et consigliere à 40 d'affinité ou plus) : ${conj.length ? esc(conj.map((n) => n.name).join(', ')) : 'aucun conjuré'}.</p>
+      <div class="odds" style="--odds:${oddsTone(coup)}">Puissance <b class="num">${CA.coupPower(s)}</b> contre la garde du Don <b class="num">${CA.coupDefense(s)}</b> · <b style="color:${oddsTone(coup)}">${pct(coup)}</b></div>
+      <p class="note danger">Si ça rate : 55 % d'être exécuté, sinon tu perds ton quartier et tes galons.</p>
+      <button class="btn small danger" data-act="plot" data-id="coup" ${why ? 'disabled' : ''}>${ui.confirm === 'plot-coup' ? 'Confirmer : frapper dimanche' : 'Préparer le coup'}</button></article>
+    <article class="job"><div class="job-head"><b>Les fédéraux</b><span class="tag">trahison</span></div>
+      <p>Tu livres le Don et ${esc(CA.favori(s)?.name ?? 'son bras droit')} au grand jury. Dans deux semaines, ils tombent, ton dossier repart de zéro, et tu prends la place sans vote.</p>
+      <p class="note danger">Ensuite, chaque semaine, ${Math.round(CA.FEDS_RISK * 1000) / 10} % de risque que la famille l'apprenne : loyauté effondrée et toutes les familles contre toi.</p>
+      <button class="btn small danger" data-act="plot" data-id="feds" ${why ? 'disabled' : ''}>${ui.confirm === 'plot-feds' ? 'Confirmer : rencontrer l’agent' : 'Rencontrer un agent fédéral'}</button></article>
+    <article class="job"><div class="job-head"><b>Une famille rivale</b><span class="tag">trahison</span></div>
+      <p>Une famille de New Corrano qui t'apprécie (relation ≥ 20) élimine le Don pour toi. En échange, tu lui dois un des quartiers hérités et une alliance.</p>
+      ${cands.length ? cands.map((r) => { const ch = CA.rivalPactChance(s, r.id); return `<div class="row"><div class="grow"><span style="color:${r.color}">${esc(r.name)}</span> <span class="muted">· relation ${Math.round(r.relation)}</span><small style="color:${oddsTone(ch)}">${pct(ch)} de réussite</small></div>
+        <button class="btn small danger" data-act="plot" data-id="rival" data-to="${r.id}" ${why ? 'disabled' : ''}>${ui.confirm === `plot-rival-${r.id}` ? 'Confirmer' : 'Sceller le pacte'}</button></div>`; }).join('') : '<p class="empty">Aucune famille ne t’apprécie assez (dîners d’affaires dans l’onglet Rivaux).</p>'}
+      <p class="note danger">Si ça rate : même sort qu'un coup d'État raté, et la famille rivale perd 30 de relation.</p></article>
+  </div>`;
+}
+
 function relationMeterValue(v: number) {
   const left = v < 0 ? 50 + v / 2 : 50;
   return `<div class="rel" role="meter" aria-valuenow="${v}" aria-valuemin="-100" aria-valuemax="100"><i style="left:${left}%;width:${Math.abs(v) / 2}%;background:${v >= 0 ? 'var(--good)' : 'var(--oxblood)'}"></i><b></b></div>`;
@@ -1435,7 +1470,7 @@ function rivalsPanel() {
         </div>
         <div class="meter"><i style="width:${clamp((r.strength / max) * 100, 4, 100)}%;background:${r.color}"></i></div>
         ${relationMeter(r)}
-        ${CA.inCareer(s) ? '' : `<div class="diplo">
+        ${CA.inCareer(s) ? (CA.careerRank(s) === 'capo' && !r.employer ? `<div class="diplo"><button class="btn small" data-act="sitdown" data-id="${r.id}" ${!r.talkCooldown && s.clean >= D.SIT_DOWN_COST && !r.war ? '' : 'disabled'}>Dîner d'affaires · ${money(D.SIT_DOWN_COST)}${cd}</button><span class="muted need">En tant que capo, tu peux seulement nouer des liens.</span></div>` : '') : `<div class="diplo">
           ${r.war
             ? `<button class="btn small" data-act="peace" data-id="${r.id}" ${s.clean >= D.PEACE_COST ? '' : 'disabled'}>Négocier la paix · ${money(D.PEACE_COST)} propre</button>`
             : `<button class="btn small" data-act="sitdown" data-id="${r.id}" ${!r.talkCooldown && s.clean >= D.SIT_DOWN_COST ? '' : 'disabled'}>Dîner d'affaires · ${money(D.SIT_DOWN_COST)}${cd}</button>
@@ -1714,6 +1749,12 @@ app.addEventListener('click', (ev) => {
     case 'setup-origin': readSetup(); ui.setup.origin = id; return render();
     case 'setup-map': readSetup(); ui.setup.classic = id === 'classic'; return render();
     case 'gift': return run(CA.gift(s, id));
+    case 'plot': {
+      const key = id === 'rival' ? `plot-rival-${el.dataset.to}` : `plot-${id}`;
+      if (!confirmed(key)) return;
+      return run(CA.startPlot(s, id as 'coup' | 'feds' | 'rival', el.dataset.to));
+    }
+    case 'plot-cancel': return run(CA.cancelPlot(s));
     case 'kickup': return run(CA.setKickup(s, Number(id)));
     case 'start': {
       readSetup();

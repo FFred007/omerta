@@ -298,6 +298,8 @@ export function careerTick(s: GameState) {
   const c = s.career;
   if (!c || c.rank === 'don') return;
   resolveMissions(s);
+  resolvePlot(s);
+  if (s.career!.rank === 'don' || s.status !== 'playing') return;
   // le capo verse son tribut : la confiance suit
   if (c.rank === 'capo' && owned(s).length) addTrust(s, c.kickup >= 0.4 ? 2 : c.kickup >= 0.3 ? 1 : -2);
   if (c.rank === 'capo' && !owned(s).length) {
@@ -541,6 +543,19 @@ export function resolveCareerEffect(s: GameState, effect: string, ev: PendingEve
       }
       break;
     case 'ca_win': becomeDon(s, 'succession'); break;
+    case 'ca_rat_hush':
+      s.dirty -= 5000;
+      if (chance(clamp(0.35 + ((p.verbe ?? 5) - 5) * 0.07, 0.1, 0.9))) { log(s, 'neutral', 'Le capo trop curieux a été muté… au fond du lac. La rumeur meurt avec lui.'); break; }
+    // fallthrough
+    case 'ca_rat_out':
+      c.informant = false;
+      s.members.filter((m) => !m.isDon && !m.isChild).forEach((m) => (m.loyalty = clamp(m.loyalty - 25, 0, 100)));
+      s.rivals.filter((r) => r.alive).forEach((r) => (r.relation = clamp(r.relation - 30, -100, 100)));
+      s.coalitionWeeks = 8;
+      s.respect = clamp(s.respect - 15, 0, 150);
+      log(s, 'bad', 'Tout le monde sait que tu as livré l’ancien Don aux fédéraux. Tes hommes doutent, et toutes les familles se liguent contre toi.');
+      news(s, 6, 'Le Don balance', 'Selon nos sources, le chef de la famille de Little Sicily aurait été un informateur fédéral.');
+      break;
     case 'ca_lose': {
       const fav = favori(s);
       if (!fav) { becomeDon(s, 'succession'); break; }
@@ -563,6 +578,127 @@ export function resolveCareerEffect(s: GameState, effect: string, ev: PendingEve
   return true;
 }
 
+
+// ---------- Prendre le pouvoir autrement : coup d'État et trahisons ----------
+export const PLOT_WEEKS = { coup: 1, feds: 2, rival: 1 } as const;
+/** Conjurés : les capos et le consigliere qui te suivraient (affinité ≥ 40) */
+export const conspirators = (s: GameState) => (s.career?.notables ?? []).filter((n) => (n.role === 'capo' || n.role === 'consigliere') && !n.favori && n.affinity >= 40);
+const loyalists = (s: GameState) => (s.career?.notables ?? []).filter((n) => n.role === 'capo' && n.affinity < 40);
+export function coupPower(s: GameState) {
+  const p = player(s);
+  const crew = activeMembers(s).filter((m) => !m.isDon);
+  return (p?.force ?? 5) + Math.round(crew.reduce((t, m) => t + m.force, 0) / 2) + conspirators(s).length * 5;
+}
+export const coupDefense = (s: GameState) => 14 + loyalists(s).length * 4 + (favori(s) ? 4 : 0);
+export const coupChance = (s: GameState) => winChance(coupPower(s), coupDefense(s));
+export function rivalPactChance(s: GameState, rid: string) {
+  const r = s.rivals.find((x) => x.id === rid);
+  if (!r) return 0;
+  return winChance(Math.round(r.strength) + Math.round(coupPower(s) / 2), coupDefense(s) + 2);
+}
+export const pactCandidates = (s: GameState) => s.rivals.filter((r) => r.alive && !r.employer && (r.city ?? 'corrano') === 'corrano' && r.relation >= 20);
+export const FEDS_RISK = 0.015; // par semaine, une fois Don : la famille découvre que tu as parlé
+
+export function plotBlocker(s: GameState): string | null {
+  const c = s.career;
+  if (!c || c.rank !== 'capo') return 'Seul un capo peut viser le trône.';
+  if (c.plot) return 'Un complot est déjà en cours.';
+  if (player(s)?.status !== 'actif') return 'Tu n’es pas en état.';
+  return null;
+}
+export function startPlot(s: GameState, kind: 'coup' | 'feds' | 'rival', rival?: string): Result {
+  const why = plotBlocker(s);
+  if (why) return fail(why);
+  const c = s.career!;
+  if (kind === 'rival') {
+    const r = pactCandidates(s).find((x) => x.id === rival);
+    if (!r) return fail('Il faut une famille de New Corrano qui t’apprécie (relation ≥ 20).');
+  }
+  if (kind === 'coup' && activeMembers(s).filter((m) => !m.isDon).length < 2) return fail('Il te faut au moins 2 hommes à toi pour frapper.');
+  c.plot = { kind, week: s.week + PLOT_WEEKS[kind] - 1, rival };
+  const label = kind === 'coup' ? 'Le coup d’État aura lieu dimanche soir.' : kind === 'feds' ? 'L’agent fédéral te donne rendez-vous. Le grand jury frappera dans deux semaines.' : `${s.rivals.find((x) => x.id === rival)?.boss} accepte. Ses tueurs frapperont dimanche soir.`;
+  log(s, 'neutral', label);
+  return ok;
+}
+export function cancelPlot(s: GameState): Result {
+  if (!s.career?.plot) return fail('Aucun complot.');
+  if (s.career.plot.kind === 'feds') return fail('On ne revient pas en arrière avec les fédéraux.');
+  s.career.plot = null;
+  log(s, 'neutral', 'Tu renonces. Pour cette fois.');
+  return ok;
+}
+
+function plotFails(s: GameState, what: string) {
+  const c = s.career!;
+  const p = player(s)!;
+  c.plot = null;
+  if (chance(0.55)) {
+    killMember(s, p, `a été exécuté pour avoir comploté contre le Don (${what})`);
+    return;
+  }
+  p.status = 'blessé'; p.statusWeeks = 4; p.scars = (p.scars ?? 0) + 1;
+  c.trust = 0;
+  c.rank = 'soldat';
+  c.rankWeek = s.week;
+  for (const d of s.districts.filter((x) => x.owner === 'player')) d.owner = c.employer;
+  s.respect = clamp(s.respect - 15, 0, 150);
+  log(s, 'bad', `Le complot a échoué (${what}). Tu t'en sors avec une balle dans le ventre ; le Don te reprend ton quartier et tes galons.`);
+  news(s, 4, 'Fusillade chez les Moretti', 'Une tentative de putsch aurait échoué dans la nuit. Le patriarche est indemne.');
+}
+
+function resolvePlot(s: GameState) {
+  const c = s.career!;
+  const pl = c.plot;
+  if (!pl || s.week < pl.week) return;
+  const p = player(s);
+  if (!p) return;
+  if (pl.kind === 'coup') {
+    if (Math.random() < coupChance(s)) {
+      c.plot = null;
+      log(s, 'good', `Dimanche soir, le restaurant ferme ses portes plus tôt. ${theDon(s)?.name} ne s'est pas relevé de table.`);
+      news(s, 6, 'Le patriarche de Little Sicily abattu', 'Le Don a été tué pendant le dîner. Ses capos auraient déjà choisi son successeur.');
+      becomeDon(s, 'coup');
+      const fav = favori(s);
+      if (fav) log(s, 'bad', `${fav.name} « ${fav.nickname} » a fui avec ses fidèles. Il ne te pardonnera pas.`);
+    } else plotFails(s, 'coup d’État');
+  } else if (pl.kind === 'feds') {
+    c.plot = null;
+    c.informant = true;
+    s.dossier = 0;
+    log(s, 'police', `Le grand jury fédéral inculpe ${theDon(s)?.name} et ${favori(s)?.name ?? 'son bras droit'}. Ton dossier a disparu, mais tu appartiens désormais aux fédéraux.`);
+    news(s, 6, 'Coup de filet fédéral chez les Moretti', 'Le Don et son principal capo sont sous les verrous. Les enquêteurs disposeraient « d’une source très proche ».');
+    becomeDon(s, 'trahison');
+  } else {
+    const r = s.rivals.find((x) => x.id === pl.rival);
+    if (r && Math.random() < rivalPactChance(s, r.id)) {
+      c.plot = null;
+      c.debtTo = r.id;
+      log(s, 'good', `Les tueurs de ${r.name} ont fait le travail. Tu leur dois un quartier, et beaucoup plus.`);
+      news(s, 6, 'Le Don Moretti abattu par une famille rivale', `${r.boss} serait derrière l'attentat. Curieusement, la relève était déjà prête.`);
+      becomeDon(s, 'trahison');
+    } else {
+      if (r) r.relation = clamp(r.relation - 30, -100, 100);
+      plotFails(s, `alliance avec ${r?.name ?? 'un rival'}`);
+    }
+  }
+}
+
+/** Une fois Don : l'indic risque d'être démasqué */
+export function informantTick(s: GameState) {
+  const c = s.career;
+  if (!c || c.rank !== 'don' || !c.informant || s.pendingEvent || s.status !== 'playing') return;
+  if (!chance(FEDS_RISK)) return;
+  const p = player(s);
+  s.pendingEvent = {
+    key: 'ca_rat_don', title: 'La rumeur',
+    text: 'Un de tes capos a trouvé ton nom dans un rapport fédéral. Toute la famille murmure : le Don serait une balance.',
+    choices: [
+      { label: 'Faire taire la rumeur', hint: `−5 000 sale · Verbe ${Math.round(clamp(0.35 + ((p?.verbe ?? 5) - 5) * 0.07, 0.1, 0.9) * 100)} % · sinon tout éclate`, effect: 'ca_rat_hush', disabled: s.dirty < 5000 },
+      { label: 'Assumer et frapper le premier', hint: 'Loyauté −25 pour tous, −30 de relation avec toutes les familles, la Commission te met au ban', effect: 'ca_rat_out' },
+    ],
+  };
+}
+
 // ---------- Devenir Don ----------
 export function becomeDon(s: GameState, path: 'succession' | 'coup' | 'trahison') {
   const c = s.career!;
@@ -583,17 +719,26 @@ export function becomeDon(s: GameState, path: 'succession' | 'coup' | 'trahison'
     }));
   }
   // les capos qui t'ont soutenu te rejoignent ; le favori part
-  for (const n of c.notables.filter((x) => x.role === 'capo' && !x.favori && x.affinity > 0)) {
+  const joinAt = path === 'succession' ? 0 : 30;
+  for (const n of c.notables.filter((x) => x.role === 'capo' && !x.favori && x.affinity > joinAt)) {
     s.members.push(makeMember(s, {
       name: n.name, nickname: n.nickname, rank: 'capo', force: randInt(6, 8), discretion: randInt(5, 7), loyalty: clamp(50 + Math.round(n.affinity / 2), 40, 90),
       salary: 450, assignment: all[randInt(0, all.length - 1)]?.id ?? null, level: 3, traits: ['fidele'], seed: n.seed,
     }));
   }
   if (emp) { emp.alive = false; emp.employer = false; }
+  // la dette envers une famille rivale : un quartier hérité lui revient
+  if (path === 'trahison' && c.debtTo) {
+    const ally = s.rivals.find((r) => r.id === c.debtTo && r.alive);
+    const owed = inherited.find((d) => d.id !== 'sicily');
+    if (ally && owed) { owed.owner = ally.id; s.members.filter((m) => m.assignment === owed.id).forEach((m) => (m.assignment = null)); }
+    if (ally) { ally.alliance = true; ally.relation = Math.max(ally.relation, 60); ally.truceWeeks = 8; }
+  }
   s.familyName = `Famille ${surname}`;
   s.log.forEach((e) => (e.text = e.text.split(oldName).join(s.familyName)));
   c.rank = 'don';
   c.path = path;
+  c.plot = null;
   c.rankWeek = s.week;
   p.rank = 'capo';
   p.points = (p.points ?? 0) + 1;

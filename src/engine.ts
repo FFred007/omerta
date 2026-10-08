@@ -21,7 +21,7 @@ import { cityName, cityOf, cityDistricts, donCity, holder, isOpen, memberCity, r
 import { breachTruce, commissionTick, truceActive } from './commission';
 import { CITIES } from './data';
 import { finalize } from './score';
-import { CREW_MAX, careerRank, careerTick, generateMissions, inCareer, rankAtLeast } from './career';
+import { CREW_MAX, careerRank, careerTick, generateMissions, inCareer, informantTick, rankAtLeast } from './career';
 import { bondsTick, onDeath, onPromote, shareOp } from './bonds';
 import { bizHeat, bizName, buildBlocker, owns, resale, respectFromBuildings } from './buildings';
 import { onKilled, vendettasTick } from './vendetta';
@@ -295,6 +295,7 @@ export function endTurn(s: GameState): LogEntry[] {
   heatWarnings(s);
   if (rankAtLeast(s, 'capo')) pressureTick(s);
   if (!inCareer(s)) objectivesTick(s);
+  informantTick(s);
   checkEnd(s);
   publishHerald(s);
   const explained = knownLines.reduce((a, l) => a + l.value, 0);
