@@ -133,6 +133,7 @@ export function render() {
     : null;
   app.innerHTML = `
     ${topbar()}
+    ${clockBar()}
     <main class="layout">
       <section>
         ${mapView()}
@@ -371,17 +372,11 @@ function cityTabs() {
 function weekCard() {
   const p = projection(s);
   const f = E.settle(s);
-  const blocked = !!s.pendingEvent || s.status !== 'playing';
   const rate = s.launderRate ?? 1;
   const row = (label: string, n: number, cls: string) =>
     n ? `<span>${label}</span><span class="num ${cls}">${sign(n)}</span>` : '';
   const rates: [number, string][] = [[1, 'Max'], [0.5, 'Moitié'], [0, 'Arrêt']];
   const crates = GOOD_ORDER.reduce((t, g) => t + p.plan.sold[g], 0);
-  const jobsReady = s.jobs.filter((j) => j.team.length >= j.minMen).length;
-  const label = [
-    s.orders.length ? `${s.orders.length} assaut${s.orders.length > 1 ? 's' : ''}` : '',
-    jobsReady ? `${jobsReady} coup${jobsReady > 1 ? 's' : ''}` : '',
-  ].filter(Boolean).join(' · ');
   return `
   <div class="week-card">
     <h3>Prévisions de la semaine</h3>
@@ -416,18 +411,29 @@ function weekCard() {
       <span class="seg">${rates.map(([r, l]) => `<button class="btn small ${rate === r ? 'on' : ''}" data-act="launder" data-id="${r}" aria-pressed="${rate === r}">${l}</button>`).join('')}</span>
     </div>` : ''}
     ${heatBlock(false)}
-    <div class="end-dock">
-      <div class="clock" role="group" aria-label="Horloge">
-        <div class="clock-top">
-          <span id="clock-day" class="clock-day"></span>
-          <span class="muted clock-plan">${label ? esc(label) + ' prévus dimanche' : ''}</span>
-        </div>
-        <div class="daybar" aria-hidden="true">${[0, 1, 2, 3, 4, 5, 6].map((i) => `<i class="${i === 6 ? 'sun' : ''}"></i>`).join('')}</div>
-        <div class="clock-ctrl">
-          <button class="btn primary play" data-act="play" ${blocked ? 'disabled' : ''}>Lecture</button>
-          <span class="seg">${SPEEDS.map((v) => `<button class="btn small ${speed() === v ? 'on' : ''}" data-act="speed" data-id="${v}" aria-pressed="${speed() === v}" aria-label="Vitesse ×${v}">×${v}</button>`).join('')}</span>
-          <button class="btn small skip" data-act="end" ${blocked ? 'disabled' : ''}>Aller à dimanche soir</button>
-        </div>
+  </div>`;
+}
+
+/** L'horloge, collée en haut de l'écran */
+function clockBar() {
+  const blocked = !!s.pendingEvent || s.status !== 'playing';
+  const jobsReady = s.jobs.filter((j) => j.team.length >= j.minMen).length;
+  const label = [
+    s.orders.length ? `${s.orders.length} assaut${s.orders.length > 1 ? 's' : ''}` : '',
+    jobsReady ? `${jobsReady} coup${jobsReady > 1 ? 's' : ''}` : '',
+  ].filter(Boolean).join(' · ');
+  return `
+  <div class="clock-bar">
+    <div class="clock" role="group" aria-label="Horloge">
+      <div class="clock-top">
+        <span id="clock-day" class="clock-day"></span>
+        <span class="muted clock-plan">${label ? esc(label) + ' prévus dimanche' : ''}</span>
+      </div>
+      <div class="daybar" aria-hidden="true">${[0, 1, 2, 3, 4, 5, 6].map((i) => `<i class="${i === 6 ? 'sun' : ''}"></i>`).join('')}</div>
+      <div class="clock-ctrl">
+        <button class="btn primary play" data-act="play" ${blocked ? 'disabled' : ''}>Lecture</button>
+        <span class="seg">${SPEEDS.map((v) => `<button class="btn small ${speed() === v ? 'on' : ''}" data-act="speed" data-id="${v}" aria-pressed="${speed() === v}" aria-label="Vitesse ×${v}">×${v}</button>`).join('')}</span>
+        <button class="btn small skip" data-act="end" ${blocked ? 'disabled' : ''} aria-label="Aller à dimanche soir"><span class="long">Aller à dimanche soir</span><span class="short">Dim. ⏭</span></button>
       </div>
     </div>
   </div>`;

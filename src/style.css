@@ -30,7 +30,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; overflow-x: hidden; }
+html, body { margin: 0; overflow-x: clip; }
 .layout > section { min-width: 0; }
 body {
   background:
@@ -205,15 +205,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 .seg { display: inline-flex; gap: 4px; }
 .btn.on { background: var(--brass); color: #1a1408; border-color: var(--brass); }
 .end-turn { margin-top: 14px; width: 100%; padding: 12px; font-size: 16px; font-family: var(--display); letter-spacing: 0.04em; }
-@media (max-width: 900px) {
-  body { padding-bottom: 84px; }
-  .end-dock {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-    background: linear-gradient(180deg, rgba(19, 32, 26, 0), var(--felt) 35%);
-    padding: 18px 14px calc(10px + env(safe-area-inset-bottom));
-  }
-  .end-dock .end-turn { margin-top: 0; }
-}
+
 
 /* ---------- Panneau à onglets ---------- */
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); min-width: 0; }
@@ -484,11 +476,7 @@ select {
 @keyframes dropOut { to { transform: translateY(30px); opacity: 0; } }
 @media (max-width: 900px) {
   .herald-drop { bottom: 150px; left: 50%; translate: -50% 0; }
-  body { padding-bottom: 150px; }
-  .clock-ctrl .skip { margin-left: 0; }
   .clock-day { font-size: 15px; }
-  .end-dock { padding-top: 22px; }
-  .end-dock .clock { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .map.night { filter: none; }
@@ -614,3 +602,28 @@ select {
 .hunter.mort, .hunter.mute { opacity: 0.6; }
 .hunter details summary { cursor: pointer; font-size: 12px; margin-top: 4px; }
 .hunter small, .vendetta-card small { display: block; margin-top: 3px; }
+
+/* ---------- Horloge en haut ---------- */
+.clock-bar {
+  position: sticky; top: 0; z-index: 12;
+  background: rgba(19, 32, 26, 0.96); backdrop-filter: blur(4px);
+  border-bottom: 1px solid var(--line); padding: 8px 28px;
+}
+.clock-bar .clock { display: grid; grid-template-columns: minmax(180px, auto) minmax(140px, 1fr) auto; align-items: center; gap: 6px 18px; max-width: 1400px; margin: 0 auto; }
+.clock-bar .clock-top { flex-direction: column; align-items: flex-start; gap: 0; }
+.clock-bar .clock-ctrl .skip { margin-left: 0; }
+.clock-bar .skip .short { display: none; }
+@media (max-width: 900px) {
+  .clock-bar { padding: 8px 14px; }
+  .clock-bar .clock { grid-template-columns: 1fr auto; }
+  .clock-bar .daybar { grid-column: 1 / -1; grid-row: 2; }
+  .clock-bar .clock-top { flex-direction: row; align-items: baseline; gap: 8px; }
+  .clock-bar .clock-ctrl { grid-column: 2; grid-row: 1; flex-wrap: nowrap; gap: 4px; }
+  .clock-bar .clock-ctrl .play { min-width: 0; padding: 6px 10px; font-size: 14px; }
+  .clock-bar .skip .long { display: none; }
+  .clock-bar .skip .short { display: inline; }
+  .clock-bar .clock-plan { display: none; }
+}
+@media (max-width: 420px) {
+  .clock-bar .seg .btn { padding: 4px 7px; }
+}
