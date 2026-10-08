@@ -12,6 +12,10 @@ import { DON_TRAITS, TRAITS, rankTitle, xpForNext, type TraitId } from './traits
 import { BRANCHES, DON_STATS, STAT_CAP, TALENTS, ageOf, canLearn, donOf, donXpForNext, learnTalent, spendPoint, type Branch, type DonStat, type TalentId } from './don';
 import * as F from './family';
 import { portrait, seedOf } from './portraits';
+import * as NET from './network';
+import { acquittalChance, dossierForecast } from './dossier';
+import { COALITION_AT, inCoalition } from './pressure';
+import { progress as objProgress, rewardText as objReward } from './objectives';
 import { jobChance, teamSkill, toggleJobMember } from './jobs';
 import { ALIBI_HEAT, favorAlibi, favorFreePrisoner, moodLabel, setTariff } from './shops';
 import {
@@ -261,6 +265,9 @@ function topbar() {
       <div class="stat"><span class="k">Caisses</span><span class="v">${stockTotal(s)}<small class="muted">/${storageCap(s)}</small></span></div>
       <div class="stat stat-respect"><span class="k">Respect</span><span class="v">${Math.round(ui.shown.respect)}</span></div>
       <div class="stat"><span class="k">Faveurs</span><span class="v">${s.favors}</span></div>
+      <div class="stat heat dossier" data-act="tab" data-id="corruption" role="button" tabindex="0" title="Dossier fédéral : à 100, le Don est inculpé"><span class="k">Dossier <span class="num ${(s.dossier ?? 0) >= 70 ? 'danger' : ''}">${Math.round(s.dossier ?? 0)}/100</span></span>
+        <div class="heat-bar fed" role="meter" aria-valuenow="${Math.round(s.dossier ?? 0)}" aria-valuemin="0" aria-valuemax="100" aria-label="Dossier fédéral"><i style="width:${s.dossier ?? 0}%"></i></div>
+      </div>
       <div class="stat heat" data-act="tab" data-id="corruption" role="button" tabindex="0" title="Voir le détail de la heat"><span class="k">Heat <span class="num ${heatTone}">${s.heat}/100</span></span>
         <div class="heat-bar" role="meter" aria-valuenow="${s.heat}" aria-valuemin="0" aria-valuemax="100" aria-label="Heat"><i style="width:${s.heat}%"></i></div>
       </div>
@@ -313,9 +320,12 @@ function mapView() {
   ].filter(Boolean).join(' · ');
   return `
   <div class="map-wrap">
+    ${inCoalition(s) ? `<div class="banner danger-banner">Les familles sont coalisées contre toi encore ${s.coalitionWeeks} semaine${(s.coalitionWeeks ?? 0) > 1 ? 's' : ''} : elles attaquent 60 % plus souvent et te visent en priorité.</div>` : ''}
+    ${s.trial ? `<div class="banner danger-banner">Procès fédéral en cours : étape ${Math.min(4, s.trial.stage + 1)} sur 4 · ${Math.round(acquittalChance(s) * 100)} % d'acquittement pour l'instant.</div>` : ''}
     <div class="map-title"><h2>New Corrano</h2><span class="muted" style="font-size:13px">${busy ? esc(busy) + ' · ' : ''}${owned(s).length} / 9 quartiers</span></div>
     <div class="map">${tiles}</div>
     <div class="legend">${legend}</div>
+    ${objectivesBlock()}
     <div class="feed-wrap">
       <h3 class="feed-title">Le fil de la ville</h3>
       <ul id="feed" class="log feed" aria-live="polite"></ul>
@@ -415,7 +425,7 @@ function heatBlock(always: boolean) {
         <span class="total">Certain</span><span class="num total ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span>
       </div>
       ${risks.length ? `<h4>Peut s'ajouter dimanche soir</h4><div class="ledger-rows">${risks.map(row).join('')}</div>` : ''}
-      <p class="note">Autres sources possibles : descentes (−8 après coup, mais elles ferment un établissement), commerçants furieux qui te dénoncent (+7), traîtres qui parlent (+18), événements. Au-dessus de 85, les fédéraux peuvent t'arrêter.</p>
+      <p class="note">Autres sources possibles : descentes (−8 après coup, mais elles ferment un établissement), commerçants furieux qui te dénoncent (+7), traîtres qui parlent (+18), événements. Une heat haute nourrit le dossier fédéral chaque semaine (+1 dès 40, +2 dès 55, +5 dès 75, +10 dès 90).</p>
       ${lh ? `<h4>Semaine dernière : ${lh.from} → ${lh.to} (${lh.to - lh.from >= 0 ? '+' : ''}${lh.to - lh.from})</h4>
         ${lh.lines ? `<div class="ledger-rows">${lh.lines.map((l) => row({ ...l, sure: true })).join('')}</div>` : ''}
         ${lastLines.length ? `<ul class="log">${lastLines.map((e) => `<li class="tone-${e.tone}">${esc(e.text)}</li>`).join('')}</ul>` : ''}
@@ -432,7 +442,7 @@ function tabs() {
     ['business', 'Alcool', salesPlan(s).shortage ? '!' : ''],
     ['coups', 'Coups', String(s.jobs.length)],
     ['famille', 'Famille', `${activeMembers(s).length}${injured ? `+${injured}` : ''}`],
-    ['corruption', 'Corruption', ''],
+    ['corruption', 'Réseau', s.trial ? 'procès' : (s.dossier ?? 0) >= 70 ? '!' : ''],
     ['rivaux', 'Rivaux', s.rivals.some((r) => r.war) ? 'guerre' : ''],
     ['journal', 'Journal', ''],
   ];
@@ -898,19 +908,57 @@ function familyPanel() {
 }
 
 // ---------- Corruption ----------
+function dossierBlock() {
+  const d = Math.round(s.dossier ?? 0);
+  const fc = dossierForecast(s);
+  const net = fc.reduce((a, l) => a + l.value, 0);
+  const ld = s.lastDossier;
+  const row = (l: { label: string; value: number }) => `<span>${esc(l.label)}</span><span class="num ${l.value > 0 ? 'danger' : 'clean'}">${l.value > 0 ? '+' : ''}${l.value}</span>`;
+  return `
+  <div class="heat-detail fed">
+    <div class="ledger-rows">${fc.length ? fc.map(row).join('') : '<span>Rien ne bouge cette semaine</span><span class="num">0</span>'}
+      <span class="total">Cette semaine</span><span class="num total ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span></div>
+    <p class="note">Ce qui le fait monter aussi : le Don vu sur une opération (+4), un homme arrêté (+2), un traître qui parle (+10), un braquage de banque (+5), un scandale (+6). À 100, le Don est inculpé : procès en 3 étapes (jury, témoin, avocat), puis verdict.</p>
+    ${ld && ld.lines.length ? `<h4>Semaine dernière : ${Math.round(ld.from)} → ${Math.round(ld.to)}</h4><div class="ledger-rows">${ld.lines.map(row).join('')}</div>` : ''}
+    ${s.trial ? `<p class="danger">Procès en cours : ${s.trial.score} points de défense, ${Math.round(acquittalChance(s) * 100)} % d'acquittement à ce stade.</p>` : d >= 80 ? '<p class="danger">Inculpation imminente.</p>' : ''}
+  </div>`;
+}
+
+function contactRow(c: NET.ContactDef) {
+  const st = NET.contactState(s, c.id);
+  const why = NET.blocker(s, c);
+  const price = NET.priceOf(s, c.id);
+  const status = st.burned ? '<span class="danger">Grillé</span>' : st.active ? '<span class="clean">À ta solde</span>' : why ? `<span class="muted">${esc(why)}</span>` : '<span class="muted">Disponible</span>';
+  const useWhy = c.action ? NET.canUse(s, c.id) : null;
+  return `<div class="person contact ${st.active ? 'on' : ''}">${portrait({ seed: seedOf(c.name), size: 44, age: 35 + (seedOf(c.name) % 25), sex: 'm', rank: 'soldat' })}<div class="grow">
+    <b>${esc(c.name)}</b> <span class="muted">· ${esc(c.role)}</span> · ${status}
+    <small>${esc(c.passive)}${c.retainer ? ` · ${money(price)} propres/sem.` : ''}</small>
+    <div class="diplo">
+      ${c.retainer ? (st.active
+        ? `<button class="btn small" data-act="net-dismiss" data-id="${c.id}">Arrêter de payer</button>`
+        : `<button class="btn small" data-act="net-hire" data-id="${c.id}" ${why ? 'disabled' : ''}>Le mettre dans ta poche · ${money(price)}/sem.</button>`) : ''}
+      ${c.action ? `<button class="btn small" data-act="net-use" data-id="${c.id}" ${useWhy ? 'disabled' : ''} title="${esc(useWhy ?? c.action.desc)}">${esc(c.action.label)} · ${money(c.action.cost)}</button><span class="muted need">${esc(c.action.desc)}${useWhy && st.active ? ` · ${esc(useWhy)}` : ''}</span>` : ''}
+    </div>
+  </div></div>`;
+}
+
 function corruptionPanel() {
   const mine = owned(s);
+  const milieux = Object.keys(NET.MILIEUX) as NET.Milieu[];
   return `
-    <h3>Corruption</h3>
-    <p class="flavor">Les enveloppes se paient en argent propre, chaque semaine. Si tu ne peux plus payer, tout le monde te lâche d'un coup.</p>
+    <h3>Le réseau</h3>
+    <p class="flavor">Des gens, pas des boutons. Ils se paient en argent propre chaque semaine, deviennent gourmands, peuvent être démasqués (heat et dossier qui explosent) ou rachetés par un rival qui te déteste. Le Verbe du Don fait baisser leurs tarifs.</p>
+    <h4>Le dossier fédéral (${Math.round(s.dossier ?? 0)}/100)</h4>
+    ${dossierBlock()}
     <h4>D'où vient ta heat (${s.heat}/100)</h4>
     ${heatBlock(true)}
+    <h4>Les vieux amis</h4>
     <div class="rows">
       <div class="row"><div class="grow">Le juge Halloran
-        <small>Annule ton inculpation une fois la heat au plus haut, et divise par deux les peines de tes hommes · ${money(JUDGE_BRIBE)}/sem. · ${E.JUDGE_MIN_RESPECT} respect requis</small></div>
+        <small>+15 % de chances d'acquittement au procès, et peines de tes hommes ÷2 · ${money(JUDGE_BRIBE)}/sem. · ${E.JUDGE_MIN_RESPECT} respect requis · introduit au procureur adjoint</small></div>
         <button class="btn small" data-act="judge">${s.judge ? 'Arrêter de payer' : 'Acheter le juge'}</button></div>
       <div class="row"><div class="grow">Le conseiller Doyle
-        <small>−3 heat par semaine et +25 % de capacité de blanchiment · ${money(COUNCIL_BRIBE)}/sem. · ${E.COUNCIL_MIN_RESPECT} respect requis</small></div>
+        <small>−3 heat par semaine et +25 % de capacité de blanchiment · ${money(COUNCIL_BRIBE)}/sem. · ${E.COUNCIL_MIN_RESPECT} respect requis · introduit au maire</small></div>
         <button class="btn small" data-act="council">${s.councilman ? 'Arrêter de payer' : 'Acheter le conseiller'}</button></div>
       <div class="row"><div class="grow">Profil bas cette semaine
         <small>Ferme tous tes commerces illégaux : aucune vente ni revenu sale, −6 heat, descentes ×0,3</small></div>
@@ -919,11 +967,29 @@ function corruptionPanel() {
         <small>Tes amis jurent que tu étais à la messe : −${ALIBI_HEAT} heat · ${s.favors} faveur${s.favors > 1 ? 's' : ''} en réserve</small></div>
         <button class="btn small" data-act="alibi" ${s.favors ? '' : 'disabled'}>Utiliser 1 faveur</button></div>
     </div>
+    ${milieux.map((m) => `<h4>${NET.MILIEUX[m]}</h4>${NET.CONTACTS.filter((c) => c.milieu === m).map(contactRow).join('')}`).join('')}
     <h4>Sergents de quartier · ${money(COP_BRIBE)} propre/sem. chacun</h4>
     <div class="rows">${mine.map((d) => `
       <div class="row"><div class="grow">${esc(d.name)}<small>Police ${['', 'faible', 'moyenne', 'forte'][d.police]}</small></div>
         <button class="btn small" data-act="cop" data-id="${d.id}">${d.bribedCop ? 'Payé · arrêter' : 'Acheter'}</button></div>`).join('')}
     </div>`;
+}
+
+function objectivesBlock() {
+  const list = s.objectives ?? [];
+  if (!list.length) return '';
+  return `<div class="contracts">
+    <h3 class="feed-title">Contrats</h3>
+    ${list.map((o) => {
+      const p = objProgress(s, o);
+      const left = o.deadline - s.week;
+      return `<div class="contract">
+        <div class="c-head"><b>${esc(o.title)}</b><span class="${left <= 2 ? 'danger' : 'muted'}">${left} sem.</span></div>
+        <div class="xp wide"><i style="width:${Math.min(100, (p / o.goal) * 100)}%"></i></div>
+        <small>${esc(o.giver)} · ${o.kind === 'dossier' ? `dossier à ${Math.round(s.dossier ?? 0)}` : `${p}/${o.goal}`} · récompense : ${objReward(o)}</small>
+      </div>`;
+    }).join('')}
+  </div>`;
 }
 
 // ---------- Rivaux ----------
@@ -1032,8 +1098,9 @@ function rulesList() {
     <li><b>Coups</b> : chaque semaine, de nouvelles opportunités. Choisis l'équipe, la chance est affichée.</li>
     <li><b>Commerçants</b> : règle le tarif de protection. Rends-leur service, ils te devront des faveurs.</li>
     <li><b>Argent</b> : le <span class="dirty">sale</span> vient des rackets ; les façades le blanchissent en <span class="clean">propre</span>, qui paie flics, juges et élus.</li>
-    <li><b>Heat</b> : au-delà de 85, les fédéraux peuvent t'arrêter. Seul un juge acheté te sauve.</li>
-    <li><b>Victoire</b> : les 9 quartiers, ou 7 quartiers avec 100 de respect.</li>`;
+    <li><b>Heat et dossier fédéral</b> : la heat nourrit le dossier fédéral. À 100, le Don passe en procès. Ton réseau (journalistes, flics, juges) t'aide à tenir.</li>
+    <li><b>Puissance</b> : au-delà de ${COALITION_AT} quartiers, les familles peuvent se coaliser contre toi.</li>
+    <li><b>Victoire</b> : les 9 quartiers, ou 8 quartiers avec 120 de respect.</li>`;
 }
 
 // =====================================================================
@@ -1122,6 +1189,9 @@ app.addEventListener('click', (ev) => {
     case 'propose': return run(F.propose(s));
     case 'abandon': if (confirmed('abandon')) run(F.abandonCourtship(s)); return;
     case 'heir': return run(F.setHeir(s, Number(id)));
+    case 'net-hire': return run(NET.hire(s, id as NET.ContactId));
+    case 'net-dismiss': return run(NET.dismiss(s, id as NET.ContactId));
+    case 'net-use': return run(NET.useAction(s, id as NET.ContactId));
     case 'hire': return run(E.hire(s, Number(id)));
     case 'fire': if (confirmed(`fire-${id}`)) run(E.fire(s, Number(id))); return;
     case 'promote': return run(E.promote(s, Number(id)));

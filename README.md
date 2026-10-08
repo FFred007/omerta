@@ -26,7 +26,7 @@ npx vite-node tests/forecast.ts      # prévisions = ce que le moteur applique (
 npx vite-node tests/calib.ts         # % affiché = taux de réussite réel (assauts et coups)
 ```
 
-Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérives, pas à mesurer la difficulté pour un humain. Repère v0.2 : environ 25 % de victoires pour le bot.
+Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérives, pas à mesurer la difficulté pour un humain. Repère v0.6 : environ 50 % de victoires pour un bot qui ignore la heat, le réseau et la famille.
 
 ## Règles
 
@@ -38,13 +38,17 @@ Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérive
 - **Corrano Herald.** Chaque semaine, la une du journal reprend l'événement le plus marquant.
 - **Argent sale / propre.** Le blanchiment (Max, Moitié, Arrêt) passe le sale restant après les salaires en propre, avec 15 % de commission. Façades et enveloppes se paient en propre.
 - **Territoire.** 9 quartiers en grille 3×3, attaques sur les voisins. Puissance = force des hommes (+2 par capo) + respect/20, contre la défense, ±25 % d'aléa de chaque côté.
-- **Heat.** Monte avec les commerces illégaux, les assauts, les coups et le cash stocké. Au-dessus de 85, les fédéraux peuvent arrêter le Don, sauf juge acheté.
+- **Heat.** Monte avec les commerces illégaux, les assauts, les coups et le cash stocké. Elle attire les descentes et nourrit le dossier fédéral.
+- **Dossier fédéral.** Monte avec la heat (+1 dès 40, jusqu'à +10 dès 90), la taille de l'empire, le Don vu sur une opération, les arrestations, les traîtres, les braquages et les scandales. À 100 : procès en 3 étapes (jury, témoin, avocat) puis verdict, chance d'acquittement exacte. Coupable : 20 ans, l'héritier reprend.
+- **Réseau.** Reporter et rédacteur en chef du Herald, capitaine et commissaire, greffier et procureur adjoint, maire, curé, orphelinat, agent fédéral : mensualités et actions ponctuelles, introductions, avidité, scandales, rachat par un rival.
+- **Pression.** Au-delà de 5 quartiers, les familles peuvent se coaliser 8 semaines contre toi ; un capo ambitieux peu loyal peut tenter un coup d'État ; les ennemis jurés tentent d'assassiner le Don.
+- **Contrats.** Trois objectifs à moyen terme en permanence, avec échéance et récompense.
 - **Hommes.** Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat la plus utilisée ; tous les deux niveaux, un trait (Tireur d'élite, Gueule cassée, Fantôme, Comptable, Chauffeur, Négociateur…). Rangs : Recrue, Soldat, Homme de confiance, Vétéran, Capo. Les 4 recrues sont renouvelées chaque semaine, avec leurs traits et parfois un défaut (Bavard, Cupide, Ivrogne, Trouillard). Les Dons rivaux ont aussi des traits, et en gagnent avec leurs victoires (Aguerri) ou leurs défaites contre toi (Revanchard).
 - **Le Don.** Ton personnage : Poigne, Ombre, Verbe, Flair, expérience double, et des points à placer en stats ou en talents (Boucher, Renard, Parrain : 5 talents chacun). Il peut monter au front (assauts, coups) : +2 par homme à ses côtés, +2 respect, mais +5 heat (vu sur les lieux), blessures, cicatrices, arrestation ou mort.
 - **La famille du Don.** Rencontres (chanteuse, héritière, fille de commerçant, fille d'un Don rival qui scelle une alliance), cour, mariage, épouse avec traits et affection, grossesse, naissances, éducation à 6 et 12 ans, entrée dans les affaires à 16 ans. 1 an = 6 semaines. Si le Don meurt ou tombe pour 20 ans, l'héritier reprend avec la moitié de ses talents ; s'il est mineur, un régent tient la famille ; sans enfant, la partie s'achève.
 - **Portraits.** Générés en SVG (gravure de journal), ils évoluent avec l'âge, les cicatrices et le rang.
 - **Rang.** Petite bande → Famille de quartier → Famille établie → Grande famille → Capo dei Capi, selon le respect.
-- **Victoire :** 9 quartiers, ou 7 quartiers et 100 de respect. **Défaite :** arrestation, plus aucun quartier, ou faillite sans hommes.
+- **Victoire :** 9 quartiers, ou 8 quartiers et 120 de respect. **Défaite :** arrestation, plus aucun quartier, ou faillite sans hommes.
 
 ## Structure
 
@@ -64,6 +68,10 @@ src/
   don.ts        le Don : stats, talents, points, vieillissement
   family.ts     épouse, cour, mariage, enfants, héritier, succession, régence
   portraits.ts  portraits SVG générés
+  network.ts    réseau d'influence
+  dossier.ts    dossier fédéral et procès
+  pressure.ts   coalition, capos ambitieux, tentatives d'assassinat
+  objectives.ts contrats à moyen terme
   fx.ts         effets visuels : camions, fusillades, compteurs, une du journal
   ui.ts         rendu et interactions
   style.css     thème feutre, laiton et sang de bœuf

@@ -6,6 +6,7 @@ import {
 import type { GameState, Job, JobStat, Member, RivalFamily } from './types';
 import { donHas, has } from './traits';
 import { DON_SEEN_HEAT, donHasTalent } from './don';
+import { DOSSIER_ARREST, DOSSIER_SEEN, addDossier } from './dossier';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -209,6 +210,7 @@ export function resolveJobs(s: GameState) {
     const r = job.rivalId ? s.rivals.find((x) => x.id === job.rivalId) : undefined;
     const donThere = men.some((m) => m.isDon);
     s.heat = clamp(s.heat + donJobHeat(s, men.map((m) => m.id)), 0, 100);
+    if (donJobHeat(s, men.map((m) => m.id))) addDossier(s, DOSSIER_SEEN, `Le Don vu sur « ${job.title} »`);
     if (r && job.relationHit) r.relation = clamp(r.relation - job.relationHit * (a > b ? 1 : 0.5) * (donHas(r, 'rancunier') ? 1.5 : 1), -100, 100);
 
     if (a > b) {
@@ -241,7 +243,10 @@ export function resolveJobs(s: GameState) {
       men.forEach((m) => (m.loyalty = clamp(m.loyalty + 3, 0, 100)));
       men.forEach((m) => award(s, m, 3 + (job.difficulty >= 15 ? 1 : 0), job.stat));
       log(s, 'good', `Coup réussi : ${job.title} ${dice}. ${gains.join(', ')}.`);
-      if (job.key === 'banque') news(s, 5, 'Braquage spectaculaire en plein jour', 'La Corrano Savings Bank délestée de sa paie. Aucun suspect, aucun témoin.');
+      if (job.key === 'banque') {
+        news(s, 5, 'Braquage spectaculaire en plein jour', 'La Corrano Savings Bank délestée de sa paie. Aucun suspect, aucun témoin.');
+        addDossier(s, 5, 'Braquage d’une banque : crime fédéral');
+      }
       if (job.key === 'boxe') news(s, 2, 'Kid Malone au tapis au 4e round', 'Stupeur au Coliseum. Les parieurs crient au scandale.');
     } else {
       s.heat = clamp(s.heat + jobFailHeat(s, job), 0, 100);
@@ -265,6 +270,7 @@ function consequences(s: GameState, men: Member[], danger: number, stat: JobStat
       if (s.judge) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
       if (donHasTalent(s, 'r_avocat')) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
       log(s, 'police', `${m.nickname} se fait pincer (${m.statusWeeks} sem. de prison).`);
+      addDossier(s, DOSSIER_ARREST, `${m.nickname} arrêté : il pourrait parler`);
     } else if (chance(stat === 'force' ? danger * 0.6 : danger * 0.3)) {
       m.status = 'blessé';
       m.statusWeeks = randInt(1, 3);

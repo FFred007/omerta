@@ -300,6 +300,14 @@ export interface GameState {
   regency?: Regency | null;
   generation?: number;
   dynasty?: PastDon[];
+  contacts?: Record<string, { active: boolean; price: number; lastUse?: number; burned?: boolean; known?: boolean }>;
+  dossier?: number;
+  dossierWeek?: { label: string; value: number }[];
+  lastDossier?: { from: number; to: number; lines: { label: string; value: number }[] };
+  trial?: { stage: number; score: number } | null;
+  agentWarned?: boolean;
+  coalitionWeeks?: number;
+  objectives?: Objective[];
   /** jour de la semaine en cours (0 = lundi … 6 = dimanche) */
   day?: number;
   speed?: number;
@@ -312,8 +320,22 @@ export interface GameState {
   nextId: number;
   status: 'playing' | 'won' | 'lost';
   endReason: string;
-  stats: { battlesWon: number; battlesLost: number; laundered: number; raids: number; jobsDone: number; cratesSold: number };
+  stats: { battlesWon: number; battlesLost: number; laundered: number; raids: number; jobsDone: number; cratesSold: number; contracts?: number };
 }
 
 export type FxKind = 'battle' | 'capture' | 'lost' | 'raid' | 'ship' | 'intercept' | 'job' | 'jobfail' | 'sale';
 export interface FxEvent { kind: FxKind; d?: string }
+
+export interface Objective {
+  id: number;
+  kind: string;
+  title: string;
+  giver: string;
+  target?: string;
+  base: number;
+  goal: number;
+  streak?: number;
+  deadline: number;
+  createdWeek: number;
+  reward: { dirty?: number; clean?: number; respect?: number; favors?: number };
+}

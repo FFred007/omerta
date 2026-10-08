@@ -13,6 +13,10 @@ import { donHas, familyCount, has } from './traits';
 import { DON_SEEN_HEAT, donHasTalent, launderFee } from './don';
 import { familyTick, offendInLaws, spouseHas, succession } from './family';
 import { donJobHeat, jobFailHeat } from './jobs';
+import { activeContacts, contactState, networkRaids, networkTick } from './network';
+import { DOSSIER_ARREST, DOSSIER_RAT, DOSSIER_SEEN, addDossier, dossierTick, trialEvent } from './dossier';
+import { inCoalition, pressureTick } from './pressure';
+import { fillObjectives, objectivesTick } from './objectives';
 import type { BusinessKind, District, GameState, LogEntry, Member, RivalFamily } from './types';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -20,7 +24,7 @@ const ok: ActionResult = { ok: true };
 const fail = (error: string): ActionResult => ({ ok: false, error });
 
 export const JUDGE_MIN_RESPECT = 15;
-export const RIVAL_STRENGTH_COST = 1000;
+export const RIVAL_STRENGTH_COST = 850;
 export const COUNCIL_MIN_RESPECT = 35;
 export const HEAT_DECAY = 4;
 export const RECRUITS_PER_WEEK = 4;
@@ -203,6 +207,7 @@ export function heatForecast(s: GameState) {
   const rounded = Math.round(raw);
   if (lines.length && rounded !== raw) lines[lines.length - 1].value += rounded - raw;
   if (spouseHas(s, 'pieuse')) lines.push({ label: 'Ta femme, pieuse, rassure le curé', value: -1, sure: true });
+  for (const c of activeContacts(s)) if (c.heat) lines.push({ label: `${c.name} (${c.role})`, value: c.heat, sure: true });
   const chatter = familyCount(s, 'bavard');
   if (chatter) lines.push({ label: `Bavard${chatter > 1 ? 's' : ''} dans la famille`, value: chatter, sure: true });
   lines.push({ label: 'Retombée naturelle', value: -HEAT_DECAY, sure: true });
@@ -231,6 +236,7 @@ export function heatForecast(s: GameState) {
 export function startGame(familyName?: string) {
   const s = newGame(familyName);
   generateJobs(s);
+  fillObjectives(s);
   return s;
 }
 
@@ -242,6 +248,8 @@ export function endTurn(s: GameState): LogEntry[] {
   if (s.status !== 'playing' || s.pendingEvent) return [];
   const week = s.week;
   const heatStart = s.heat;
+  const dossierStart = s.dossier ?? 0;
+  s.dossierWeek = [];
   // ce qui est connu d'avance : commerces, retombée, assauts ordonnés
   const known = heatForecast(s).lines.filter((l) => l.sure || l.label.startsWith('Assaut'));
   // les assauts sans homme valide n'auront pas lieu
@@ -263,7 +271,11 @@ export function endTurn(s: GameState): LogEntry[] {
   shopsTick(s);
   crewTurn(s, raidedDistricts);
   familyTick(s);
-  donArrestCheck(s);
+  networkTick(s);
+  dossierTick(s);
+  heatWarnings(s);
+  pressureTick(s);
+  objectivesTick(s);
   checkEnd(s);
   publishHerald(s);
   const explained = knownLines.reduce((a, l) => a + l.value, 0);
@@ -271,6 +283,7 @@ export function endTurn(s: GameState): LogEntry[] {
   const lines = knownLines.map((l) => ({ label: l.label, value: l.value }));
   if (rest) lines.push({ label: 'Coups, livraisons, descentes et événements (détail ci-dessous)', value: rest });
   s.lastHeat = { from: heatStart, to: s.heat, lines };
+  s.lastDossier = { from: dossierStart, to: s.dossier ?? 0, lines: s.dossierWeek ?? [] };
 
   s.lastReport = s.log.filter((e) => e.week === week).reverse();
   s.orders = [];
@@ -282,6 +295,7 @@ export function endTurn(s: GameState): LogEntry[] {
   s.recruits = [];
   for (let i = 0; i < RECRUITS_PER_WEEK; i++) s.recruits.push(makeRecruit(s));
 
+  if (s.status === 'playing' && s.trial && !s.pendingEvent) s.pendingEvent = trialEvent(s);
   if (s.status === 'playing' && !s.pendingEvent && chance(0.35)) s.pendingEvent = rollEvent(s);
   return s.lastReport;
 }
@@ -307,6 +321,7 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
     const seen = donThere && !donHasTalent(s, 'r_invisible') ? DON_SEEN_HEAT : 0;
     s.heat = clamp(s.heat + 5 + d.police * 2 + men.filter((m) => has(m, 'tetebrulee')).length * 2 + seen, 0, 100);
     if (r) offendInLaws(s, r.id);
+    if (seen) addDossier(s, DOSSIER_SEEN, `Le Don vu à l'assaut sur ${d.name}`);
     men.forEach((m) => (m.fatigue = 2));
     fx(s, 'battle', d.id);
 
@@ -475,6 +490,7 @@ function economy(s: GameState) {
     owned(s).forEach((d) => (d.bribedCop = false));
     s.judge = false;
     s.councilman = false;
+    for (const c of activeContacts(s)) contactState(s, c.id).active = false;
     s.heat = clamp(s.heat + 8, 0, 100);
     log(s, 'police', "Pas assez d'argent propre pour les enveloppes : flics, juge et élus te lâchent (+8 heat).");
   }
@@ -501,7 +517,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
   for (const d of owned(s)) {
     const illegal = d.businesses.filter((b) => BUSINESSES[b.kind].illegal);
     if (!illegal.length) continue;
-    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d)) * (donHasTalent(s, 'r_ombre') ? 0.8 : 1);
+    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d)) * (donHasTalent(s, 'r_ombre') ? 0.8 : 1) * networkRaids(s);
     if (d.bribedCop) p *= 0.3;
     if (s.lowProfile) p *= 0.3;
     if (!chance(p)) continue;
@@ -531,6 +547,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
         if (s.judge) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
         if (donHasTalent(s, 'r_avocat')) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
         log(s, 'police', `${m.nickname} est arrêté (${m.statusWeeks} sem. de prison${s.judge ? ', le juge a arrangé la peine' : ''}).`);
+        addDossier(s, DOSSIER_ARREST, `${m.nickname} arrêté : il pourrait parler`);
       }
     }
   }
@@ -551,7 +568,7 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     }
     // revenus et recrutement
     r.money += mine.reduce((t, d) => t + d.racket * 0.7 + d.businesses.length * 300, 0) * (donHas(r, 'riche') ? 1.25 : 1);
-    const cap = 10 + mine.length * 10;
+    const cap = 10 + mine.length * 12;
     for (let i = 0; i < 2 && r.money >= RIVAL_STRENGTH_COST && r.strength < cap; i++) {
       r.money -= RIVAL_STRENGTH_COST;
       r.strength += 1;
@@ -559,7 +576,7 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     if (r.truceWeeks > 0) r.truceWeeks--;
 
     // attaque : la relation avec le joueur décide s'il est une cible
-    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1) * (donHas(r, 'sanguinaire') ? 1.3 : 1) * (donHasTalent(s, 'b_terreur') ? 0.75 : 1);
+    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1) * (donHas(r, 'sanguinaire') ? 1.3 : 1) * (donHasTalent(s, 'b_terreur') ? 0.75 : 1) * (inCoalition(s) && !r.alliance ? 1.6 : 1);
     if (s.week < 5 || !chance(aggression)) continue;
     const spareFriend = !r.war && r.relation > 30 && chance(0.8);
     const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter((d) => {
@@ -568,7 +585,7 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
       return true;
     });
     if (!targets.length) continue;
-    const hunt = r.war || donHas(r, 'revanchard');
+    const hunt = r.war || donHas(r, 'revanchard') || (inCoalition(s) && !r.alliance);
     const score = (d: District) => defenseOf(s, d) - d.racket / 400 - (hunt && d.owner === 'player' ? 8 : 0);
     targets.sort((a, b) => score(a) - score(b));
     const target = chance(0.7) ? targets[0] : pick(targets);
@@ -678,33 +695,17 @@ function betray(s: GameState, m: Member) {
   } else {
     s.heat = clamp(s.heat + 18, 0, 100);
     log(s, 'police', `Trahison ! ${m.name} « ${m.nickname} » s'est mis à table avec la police (+18 heat).`);
+    addDossier(s, DOSSIER_RAT, `${m.nickname} témoigne contre la famille`);
     news(s, 4, 'Un repenti parle au procureur', `${m.name}, dit « ${m.nickname} », livrerait les secrets de la ${s.familyName}.`);
   }
 }
 
 // ---------- Arrestation du Don ----------
-function donArrestCheck(s: GameState) {
-  if (s.heat >= 70 && s.heat < 85) log(s, 'police', 'Le procureur prépare un dossier contre toi. Fais baisser la pression.');
-  if (s.heat < 85) return;
-  if (!chance(((s.heat - 80) / 50) * (donHasTalent(s, 'r_insaisissable') ? 0.5 : 1))) {
-    log(s, 'police', 'Les fédéraux rôdent autour de ta maison. Une inculpation est imminente.');
-    return;
-  }
-  if (s.judge) {
-    s.heat = clamp(s.heat - 30, 0, 100);
-    s.clean = Math.max(0, s.clean - 2000);
-    log(s, 'police', "Tu es inculpé… mais ton juge fait annuler la procédure pour vice de forme (-2 000 propre, -30 heat).");
-  } else {
-    const don = s.members.find((m) => m.isDon);
-    if (don) {
-      s.heat = clamp(s.heat - 30, 0, 100);
-      succession(s, don, 'a été condamné à 20 ans de prison fédérale');
-    } else {
-      s.status = 'lost';
-      s.endReason = "Les fédéraux ont démantelé la famille pendant la régence.";
-      log(s, 'bad', s.endReason);
-    }
-  }
+/** La heat ne mène plus directement à l'arrestation : elle nourrit le dossier fédéral, qui mène au procès */
+function heatWarnings(s: GameState) {
+  const d = s.dossier ?? 0;
+  if (d >= 80 && !s.trial) log(s, 'police', `Le dossier fédéral est à ${d}/100 : une inculpation se prépare.`);
+  else if (s.heat >= 75) log(s, 'police', 'La heat est au plus haut : chaque semaine nourrit le dossier fédéral.');
 }
 
 // ---------- Fin de partie ----------
@@ -720,7 +721,7 @@ export function checkEnd(s: GameState) {
   } else if (n === s.districts.length) {
     s.status = 'won';
     s.endReason = 'Toute la ville de New Corrano te paie tribut. Tu es le Capo dei Capi.';
-  } else if (n >= 7 && s.respect >= 100) {
+  } else if (n >= 8 && s.respect >= 120) {
     s.status = 'won';
     s.endReason = 'Les familles survivantes viennent baiser ta bague. Tu es le Capo dei Capi.';
   }

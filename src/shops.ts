@@ -4,6 +4,7 @@ import { chance, clamp, district, log, membersIn, news, owned, randInt, satisfac
 import { has } from './traits';
 import { donHasTalent } from './don';
 import { spouseHas } from './family';
+import { isActive } from './network';
 import type { GameState, Tariff } from './types';
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -45,6 +46,7 @@ export function shopsTick(s: GameState) {
       if (membersIn(s, d.id).some((m) => has(m, 'beauparleur'))) delta += 2;
       if (donHasTalent(s, 'p_commercants')) delta += 1;
       if (spouseHas(s, 'quartier')) delta += 1;
+      if (isActive(s, 'cure')) delta += 1;
       shop.satisfaction = clamp(shop.satisfaction + delta, 0, 100);
     }
     const sat = satisfaction(d);

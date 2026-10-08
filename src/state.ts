@@ -7,6 +7,7 @@ import { TRAITS, donHas, donStartTraits, familyCount, familyHas, gainXp, has, ra
 import type { JobStat } from './types';
 import { DON_MORALE, donHasTalent, donXpForNext, flairBonus, makeDon } from './don';
 import { spouseHas } from './family';
+import { networkHeat, networkRetainers } from './network';
 
 export const SAVE_KEY = 'omerta-save-v2';
 export const SAVE_VERSION = 2;
@@ -408,10 +409,10 @@ export function projection(s: GameState) {
   dirtyIn = racket + fixed + booze;
   if (s.councilman) launderCap = Math.round(launderCap * 1.25);
   launderCap = Math.round(launderCap * (1 + 0.1 * familyCount(s, 'comptable') + (spouseHas(s, 'affaires') ? 0.1 : 0)));
-  heatGain += familyCount(s, 'bavard') - (spouseHas(s, 'pieuse') ? 1 : 0);
+  heatGain += familyCount(s, 'bavard') - (spouseHas(s, 'pieuse') ? 1 : 0) + networkHeat(s);
   if (spouseHas(s, 'fortune')) cleanIn += 300;
   const salaries = activeMembers(s).reduce((t, m) => t + m.salary, 0) + s.members.filter((m) => m.status !== 'actif').reduce((t, m) => t + Math.round(m.salary / 2), 0);
   const bribes =
-    owned(s).filter((d) => d.bribedCop).length * 300 + (s.judge ? 800 : 0) + (s.councilman ? 1200 : 0);
+    owned(s).filter((d) => d.bribedCop).length * 300 + (s.judge ? 800 : 0) + (s.councilman ? 1200 : 0) + networkRetainers(s);
   return { dirtyIn, racket, fixed, booze, cleanIn, launderCap, heatGain: Math.round(heatGain), salaries, bribes, plan };
 }

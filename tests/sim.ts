@@ -80,7 +80,7 @@ const MAX_WEEKS = 150;
 const results = { won: 0, lost: 0, ongoing: 0 };
 const reasons: Record<string, number> = {};
 const weeks: number[] = [];
-let lvl = 0, nm = 0, maxLvl = 0, trs = 0, warWeeks = 0, allyWeeks = 0, ownedAt30 = 0, heatSum = 0, dirtyAt20 = 0, shortageWeeks = 0, totalWeeks = 0, jobs = 0, crates = 0;
+let dos20 = 0, own20 = 0, resp20 = 0, coal = 0, trials = 0, lvl = 0, nm = 0, maxLvl = 0, trs = 0, warWeeks = 0, allyWeeks = 0, ownedAt30 = 0, heatSum = 0, dirtyAt20 = 0, shortageWeeks = 0, totalWeeks = 0, jobs = 0, crates = 0;
 
 for (let g = 0; g < N; g++) {
   const s = E.startGame();
@@ -100,7 +100,9 @@ for (let g = 0; g < N; g++) {
     if (s.lastReport.some((e) => e.text.startsWith('Rupture'))) shortageWeeks++;
     if (s.rivals.some((r) => r.war)) warWeeks++;
     if (s.rivals.some((r) => r.alliance)) allyWeeks++;
-    if (s.week === 20) dirtyAt20 += s.dirty + s.clean;
+    if (s.week === 20) { dirtyAt20 += s.dirty + s.clean; dos20 += s.dossier ?? 0; own20 += owned(s).length; resp20 += s.respect; }
+    if (s.coalitionWeeks === 8) coal++;
+    if (s.trial && s.trial.stage === 0) trials++;
     if (s.week === 30) { ownedAt30 += owned(s).length; heatSum += s.heat; }
   }
   jobs += s.stats.jobsDone;
@@ -122,3 +124,4 @@ console.log('Quartiers moyens à S30 :', (ownedAt30 / N).toFixed(2), '· heat mo
 console.log('Semaines en guerre :', ((warWeeks / totalWeeks) * 100).toFixed(0), '% · avec un allié :', ((allyWeeks / totalWeeks) * 100).toFixed(0), '%');
 console.log('Semaines en rupture de stock :', ((shortageWeeks / totalWeeks) * 100).toFixed(0), '% · coups réussis/partie :', (jobs / N).toFixed(1), '· caisses vendues/partie :', Math.round(crates / N));
 console.log('Fin de partie : niveau moyen', (lvl / nm).toFixed(1), '· niveau max', maxLvl, '· traits moyens/homme', (trs / nm).toFixed(1));
+console.log('S20 : dossier', (dos20 / N).toFixed(0), '· quartiers', (own20 / N).toFixed(1), '· respect', (resp20 / N).toFixed(0), '· coalitions/partie', (coal / N).toFixed(2), '· procès/partie', (trials / N).toFixed(2));
