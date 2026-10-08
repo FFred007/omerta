@@ -1,6 +1,8 @@
 export type FamilyId = 'player' | 'castellano' | 'kilbride' | 'wolska';
 export type Owner = FamilyId | 'neutral';
 
+import type { DonTraitId, TraitId } from './traits';
+
 export type BusinessKind =
   | 'speakeasy'
   | 'tripot'
@@ -130,6 +132,11 @@ export interface Member {
   weeksServed: number;
   /** semaines de repos après un assaut */
   fatigue?: number;
+  xp?: number;
+  level?: number;
+  traits?: TraitId[];
+  /** expérience accumulée par type d'action, décide de la stat qui progresse */
+  usage?: { force: number; discretion: number };
 }
 
 export interface Recruit {
@@ -141,6 +148,8 @@ export interface Recruit {
   loyalty: number;
   salary: number;
   cost: number;
+  traits?: TraitId[];
+  level?: number;
 }
 
 export interface RivalFamily {
@@ -157,6 +166,9 @@ export interface RivalFamily {
   alliance: boolean;
   war: boolean;
   talkCooldown: number;
+  traits?: DonTraitId[];
+  wins?: number;
+  lossesToPlayer?: number;
 }
 
 export interface AttackOrder {

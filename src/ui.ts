@@ -8,11 +8,12 @@ import * as B from './booze';
 import * as D from './diplomacy';
 import * as E from './engine';
 import { resolveEvent } from './events';
+import { DON_TRAITS, TRAITS, rankTitle, xpForNext, type TraitId } from './traits';
 import { jobChance, teamSkill, toggleJobMember } from './jobs';
 import { ALIBI_HEAT, favorAlibi, favorFreePrisoner, moodLabel, setTariff } from './shops';
 import {
   activeMembers, attackPower, clamp, clearSave, defenseOf, district, isAttackable, load, membersIn, onAttack, onJob,
-  owned, pendingCrates, projection, racketOf, retailPrice, rival, salesPlan, satisfaction, save, stockTotal, storageCap, winChance,
+  owned, pendingCrates, recruitCost, projection, racketOf, retailPrice, rival, salesPlan, satisfaction, save, stockTotal, storageCap, winChance,
 } from './state';
 import type { BusinessKind, District, Escort, GameState, Good, Job, Member, Owner, RivalFamily, Tariff } from './types';
 
@@ -72,6 +73,25 @@ const SHORT: Record<BusinessKind, string> = {
   blanchisserie: 'Lavoir', restaurant: 'Resto', garage: 'Garage', entrepot: 'Dépôt',
 };
 const moodTone = (sat: number) => (sat < 30 ? 'var(--oxblood-bright)' : sat < 45 ? 'var(--brass)' : sat < 70 ? 'var(--ivory-dim)' : 'var(--good)');
+
+function traitChips(ids: TraitId[] | undefined, withDesc = false) {
+  if (!ids?.length) return '';
+  return `<span class="traits">${ids.map((id) => {
+    const t = TRAITS[id];
+    return `<span class="trait ${t.good ? '' : 'bad'}" title="${esc(t.desc)}">${esc(t.name)}${withDesc ? `<small>${esc(t.desc)}</small>` : ''}</span>`;
+  }).join('')}</span>`;
+}
+
+/** Noms courts des traits utiles pour un type d'action */
+function traitHint(m: Member, kind: 'assault' | 'force' | 'discretion') {
+  const rel: Record<string, TraitId[]> = {
+    assault: ['tireur', 'tetebrulee', 'trouillard'],
+    force: ['brute'],
+    discretion: ['sangfroid', 'ivrogne', 'fantome'],
+  };
+  const hit = (m.traits ?? []).filter((x) => rel[kind].includes(x));
+  return hit.length ? ` · <span class="${hit.some((x) => !TRAITS[x].good) ? 'danger' : 'trait-inline'}">${hit.map((x) => TRAITS[x].name).join(', ')}</span>` : '';
+}
 
 function busyLabel(m: Member) {
   if ((m.fatigue ?? 0) > 0) return 'récupère du dernier assaut';
@@ -546,7 +566,7 @@ function attackPanel(d: District) {
       const tired = (m.fatigue ?? 0) > 0;
       return `
       <label class="check"><input type="checkbox" data-act="pick" data-id="${m.id}" ${ui.attackers.has(m.id) && !tired ? 'checked' : ''} ${tired ? 'disabled' : ''}>
-        <span>${esc(m.nickname)} <span class="muted">· F${m.force}${m.rank === 'capo' ? '+2' : ''} · ${busyLabel(m)}</span></span></label>`;
+        <span>${esc(m.nickname)} <span class="muted">· F${m.force}${m.rank === 'capo' ? '+2' : ''}${traitHint(m, 'assault')} · ${busyLabel(m)}</span></span></label>`;
     }).join('')
       : '<p class="empty">Aucun homme disponible.</p>'}
     <div class="odds" style="--odds:${tone}">
@@ -680,7 +700,7 @@ function jobsPanel() {
             const inThis = j.team.includes(m.id);
             const stat = j.stat === 'force' ? m.force : m.discretion;
             return `<label class="check"><input type="checkbox" data-act="job-pick" data-job="${j.id}" data-id="${m.id}" ${inThis ? 'checked' : ''} ${tired ? 'disabled' : ''}>
-              <span>${esc(m.nickname)} <span class="muted">· ${j.stat === 'force' ? 'F' : 'D'}${stat}${m.rank === 'capo' ? '+2' : ''}${inThis ? '' : ' · ' + busyLabel(m)}</span></span></label>`;
+              <span>${esc(m.nickname)} <span class="muted">· ${j.stat === 'force' ? 'F' : 'D'}${stat}${m.rank === 'capo' ? '+2' : ''}${traitHint(m, j.stat)}${inThis ? '' : ' · ' + busyLabel(m)}</span></span></label>`;
           }).join('')}
         </div>
         <div class="odds" style="--odds:${j.team.length ? oddsTone(p) : 'var(--line)'}">
@@ -698,11 +718,21 @@ function familyPanel() {
   const mine = owned(s);
   const memberRow = (m: Member) => {
     const statusTxt = m.status === 'actif' ? '' : `<span class="status">${m.status === 'blessé' ? 'Blessé' : 'En prison'} · ${m.statusWeeks} sem.</span>`;
-    const canPromote = m.rank === 'soldat' && m.loyalty >= 60 && m.force + m.discretion >= 12 && s.dirty >= PROMOTE_COST;
+    const solid = m.force + m.discretion >= 12 || (m.level ?? 0) >= 3;
+    const canPromote = m.rank === 'soldat' && m.loyalty >= 60 && solid && s.dirty >= PROMOTE_COST;
+    const missing = m.rank !== 'soldat' ? '' : [
+      m.loyalty < 60 ? `loyauté ${m.loyalty}/60` : '',
+      !solid ? `force + discrétion ${m.force + m.discretion}/12 ou niveau ${m.level ?? 0}/3` : '',
+      s.dirty < PROMOTE_COST ? `${money(PROMOTE_COST)} sales` : '',
+    ].filter(Boolean).join(', ');
+    const lvl = m.level ?? 0;
+    const need = xpForNext(lvl);
     return `
     <div class="man">
       <div class="who">
-        <b>${esc(m.name)}</b> <span class="nick">« ${esc(m.nickname)} »</span><span class="rank">${m.rank}</span>
+        <b>${esc(m.name)}</b> <span class="nick">« ${esc(m.nickname)} »</span><span class="rank">${rankTitle(m)} · niv. ${lvl}</span>
+        <div class="xp" role="meter" aria-valuenow="${m.xp ?? 0}" aria-valuemin="0" aria-valuemax="${need}" aria-label="Expérience de ${esc(m.nickname)}" title="${lvl >= 8 ? 'Niveau maximum' : `${m.xp ?? 0}/${need} XP avant le niveau ${lvl + 1}`}"><i style="width:${lvl >= 8 ? 100 : ((m.xp ?? 0) / need) * 100}%"></i></div>
+        ${traitChips(m.traits, true)}
         <div class="attrs">
           <span>Force <b>${m.force}</b></span><span>Discrétion <b>${m.discretion}</b></span>
           <span class="${m.loyalty < 35 ? 'loy-low' : ''}">Loyauté <b>${m.loyalty}</b></span>
@@ -717,7 +747,7 @@ function familyPanel() {
           ${mine.map((d) => `<option value="${d.id}" ${m.assignment === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
         </select>
         <button class="btn small" data-act="bonus" data-id="${m.id}" ${s.dirty >= 300 ? '' : 'disabled'}>Prime 300 $</button>
-        ${m.rank === 'soldat' ? `<button class="btn small" data-act="promote" data-id="${m.id}" ${canPromote ? '' : 'disabled'} title="Loyauté ≥ 60, force + discrétion ≥ 12, ${PROMOTE_COST} $ sale">Faire capo</button>` : ''}
+        ${m.rank === 'soldat' ? `<button class="btn small" data-act="promote" data-id="${m.id}" ${canPromote ? '' : 'disabled'}>Faire capo · ${money(PROMOTE_COST)}</button>${missing ? `<span class="muted need">Il manque : ${missing}</span>` : ''}` : ''}
         ${m.status === 'prison' ? `<button class="btn small" data-act="free" data-id="${m.id}" ${s.favors ? '' : 'disabled'}>Faire libérer · 1 faveur</button>` : ''}
         <button class="btn small danger" data-act="fire" data-id="${m.id}">${ui.confirm === `fire-${m.id}` ? 'Confirmer le renvoi' : 'Renvoyer'}</button>
       </div>
@@ -725,13 +755,17 @@ function familyPanel() {
   };
   return `
     <h3>La famille</h3>
-    <p class="flavor">Un homme mal payé, ou posté là où la police frappe, finit par parler. Sous 25 de loyauté, il peut trahir.</p>
+    <p class="flavor">Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat qu'il utilise le plus ; tous les deux niveaux, un nouveau trait. Un homme mal payé finit par parler : sous 25 de loyauté, il peut trahir.</p>
     ${s.members.length ? s.members.map(memberRow).join('') : '<p class="empty">Plus personne. Recrute avant que la ville ne l\'apprenne.</p>'}
-    <h4>Recrues disponibles cette semaine</h4>
-    <div class="rows">${s.recruits.map((r) => `
-      <div class="row"><div class="grow">${esc(r.name)} « ${esc(r.nickname)} »
-        <small>Force ${r.force} · Discrétion ${r.discretion} · Loyauté ${r.loyalty} · Salaire ${money(r.salary)}</small></div>
-        <button class="btn small" data-act="hire" data-id="${r.id}" ${s.dirty + s.clean >= r.cost ? '' : 'disabled'} title="Payé en sale d'abord, puis en propre">Recruter ${money(r.cost)}</button></div>`).join('')}
+    <h4>Recrues de la semaine <span class="muted">· nouvelle liste chaque lundi</span></h4>
+    <div class="rows">${s.recruits.map((r) => {
+      const cost = recruitCost(s, r);
+      return `
+      <div class="row recruit"><div class="grow">${esc(r.name)} « ${esc(r.nickname)} »${r.level ? ` <span class="rank">${r.level >= 3 ? 'Homme de confiance' : 'Soldat'} · niv. ${r.level}</span>` : ''}
+        <small>Force ${r.force} · Discrétion ${r.discretion} · Loyauté ${r.loyalty} · Salaire ${money(r.salary)}</small>
+        ${traitChips(r.traits, true)}</div>
+        <button class="btn small" data-act="hire" data-id="${r.id}" ${s.dirty + s.clean >= cost ? '' : 'disabled'} title="Payé en sale d'abord, puis en propre">Recruter ${money(cost)}${cost < r.cost ? ' (recruteur)' : ''}</button></div>`;
+    }).join('')}
     </div>`;
 }
 
@@ -787,6 +821,7 @@ function rivalsPanel() {
       return `<div class="rival">
         <div class="rival-name" style="color:${r.color}">${esc(r.name)}</div>
         <div class="boss">${esc(r.boss)}</div>
+        ${(r.traits ?? []).length ? `<span class="traits">${(r.traits ?? []).map((x) => `<span class="trait don" title="${esc(DON_TRAITS[x].desc)}">${esc(DON_TRAITS[x].name)}<small>${esc(DON_TRAITS[x].desc)}</small></span>`).join('')}</span>` : ''}
         <div class="facts" style="margin-top:6px">
           <span>Force <b>${Math.round(r.strength)}</b></span>
           <span>Relation <b>${Math.round(r.relation)}</b> · ${D.relationLabel(r)}</span>

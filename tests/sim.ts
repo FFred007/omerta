@@ -80,7 +80,7 @@ const MAX_WEEKS = 150;
 const results = { won: 0, lost: 0, ongoing: 0 };
 const reasons: Record<string, number> = {};
 const weeks: number[] = [];
-let warWeeks = 0, allyWeeks = 0, ownedAt30 = 0, heatSum = 0, dirtyAt20 = 0, shortageWeeks = 0, totalWeeks = 0, jobs = 0, crates = 0;
+let lvl = 0, nm = 0, maxLvl = 0, trs = 0, warWeeks = 0, allyWeeks = 0, ownedAt30 = 0, heatSum = 0, dirtyAt20 = 0, shortageWeeks = 0, totalWeeks = 0, jobs = 0, crates = 0;
 
 for (let g = 0; g < N; g++) {
   const s = E.startGame();
@@ -104,6 +104,7 @@ for (let g = 0; g < N; g++) {
     if (s.week === 30) { ownedAt30 += owned(s).length; heatSum += s.heat; }
   }
   jobs += s.stats.jobsDone;
+  for (const m of s.members) { lvl += m.level ?? 0; nm++; maxLvl = Math.max(maxLvl, m.level ?? 0); trs += (m.traits ?? []).length; }
   crates += s.stats.cratesSold;
   if (s.status === 'playing') results.ongoing++;
   else {
@@ -120,3 +121,4 @@ console.log('Semaine médiane de fin :', weeks[Math.floor(weeks.length / 2)]);
 console.log('Quartiers moyens à S30 :', (ownedAt30 / N).toFixed(2), '· heat moyenne à S30 :', (heatSum / N).toFixed(1), '· trésorerie à S20 :', Math.round(dirtyAt20 / N));
 console.log('Semaines en guerre :', ((warWeeks / totalWeeks) * 100).toFixed(0), '% · avec un allié :', ((allyWeeks / totalWeeks) * 100).toFixed(0), '%');
 console.log('Semaines en rupture de stock :', ((shortageWeeks / totalWeeks) * 100).toFixed(0), '% · coups réussis/partie :', (jobs / N).toFixed(1), '· caisses vendues/partie :', Math.round(crates / N));
+console.log('Fin de partie : niveau moyen', (lvl / nm).toFixed(1), '· niveau max', maxLvl, '· traits moyens/homme', (trs / nm).toFixed(1));

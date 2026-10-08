@@ -6,9 +6,10 @@ import { generateJobs, resolveJobs } from './jobs';
 import { onConquest, raidMood, shopsTick } from './shops';
 import {
   activeMembers, attackPower, chance, roll, winChance, clamp, committedToAttack, defenseOf, district, isAttackable, log,
-  fx, makeRecruit, membersIn, neighbors, newGame, news, nextId, owned, pick, projection, rand, randInt, rival, satisfaction,
+  award, fx, makeRecruit, membersIn, recruitCost, neighbors, newGame, news, nextId, owned, pick, projection, rand, randInt, rival, satisfaction,
 } from './state';
 import { GOOD_ORDER, GOODS } from './data';
+import { donHas, familyCount, has } from './traits';
 import type { BusinessKind, District, GameState, LogEntry, Member, RivalFamily } from './types';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -19,6 +20,7 @@ export const JUDGE_MIN_RESPECT = 15;
 export const RIVAL_STRENGTH_COST = 1000;
 export const COUNCIL_MIN_RESPECT = 35;
 export const HEAT_DECAY = 4;
+export const RECRUITS_PER_WEEK = 4;
 
 // =====================================================================
 // Actions du joueur
@@ -73,14 +75,16 @@ export function toggleCouncil(s: GameState): ActionResult {
 export function hire(s: GameState, recruitId: number): ActionResult {
   const r = s.recruits.find((x) => x.id === recruitId);
   if (!r) return fail('Recrue introuvable.');
-  if (s.dirty + s.clean < r.cost) return fail("Pas assez d'argent.");
-  const fromDirty = Math.min(s.dirty, r.cost);
+  const cost = recruitCost(s, r);
+  if (s.dirty + s.clean < cost) return fail("Pas assez d'argent.");
+  const fromDirty = Math.min(s.dirty, cost);
   s.dirty -= fromDirty;
-  s.clean -= r.cost - fromDirty;
+  s.clean -= cost - fromDirty;
   s.recruits = s.recruits.filter((x) => x.id !== recruitId);
   s.members.push({
     id: r.id, name: r.name, nickname: r.nickname, rank: 'soldat', force: r.force, discretion: r.discretion,
     loyalty: r.loyalty, salary: r.salary, assignment: null, status: 'actif', statusWeeks: 0, weeksServed: 0,
+    xp: 0, level: r.level ?? 0, traits: [...(r.traits ?? [])], usage: { force: 0, discretion: 0 },
   });
   log(s, 'good', `${r.name} « ${r.nickname} » a prêté serment.`);
   return ok;
@@ -114,7 +118,7 @@ export function promote(s: GameState, memberId: number): ActionResult {
   const m = s.members.find((x) => x.id === memberId);
   if (!m || m.rank === 'capo') return fail('Impossible.');
   if (m.loyalty < 60) return fail('Loyauté insuffisante (60 minimum).');
-  if (m.force + m.discretion < 12) return fail('Pas assez solide (force + discrétion ≥ 12).');
+  if (m.force + m.discretion < 12 && (m.level ?? 0) < 3) return fail('Pas assez solide : force + discrétion ≥ 12, ou niveau 3 (Homme de confiance).');
   if (s.dirty < PROMOTE_COST) return fail("Pas assez d'argent sale.");
   s.dirty -= PROMOTE_COST;
   m.rank = 'capo';
@@ -194,6 +198,8 @@ export function heatForecast(s: GameState) {
   // projection() arrondit la somme : on reporte l'écart d'arrondi sur la dernière ligne pour que le total soit exact
   const rounded = Math.round(raw);
   if (lines.length && rounded !== raw) lines[lines.length - 1].value += rounded - raw;
+  const chatter = familyCount(s, 'bavard');
+  if (chatter) lines.push({ label: `Bavard${chatter > 1 ? 's' : ''} dans la famille`, value: chatter, sure: true });
   lines.push({ label: 'Retombée naturelle', value: -HEAT_DECAY, sure: true });
   const after = s.dirty + settle(s).dirtyNet;
   if (after > DIRTY_STASH_LIMIT) lines.push({ label: `Liquide sale planqué au-delà de ${fmt(DIRTY_STASH_LIMIT)}`, value: Math.ceil((after - DIRTY_STASH_LIMIT) / 5000), sure: true });
@@ -203,7 +209,8 @@ export function heatForecast(s: GameState) {
 
   for (const o of s.orders) {
     const d = district(s, o.districtId);
-    lines.push({ label: `Assaut sur ${d.name}`, value: 5 + d.police * 2, sure: false });
+    const hot = s.members.filter((m) => o.memberIds.includes(m.id) && has(m, 'tetebrulee')).length * 2;
+    lines.push({ label: `Assaut sur ${d.name}${hot ? ' (têtes brûlées)' : ''}`, value: 5 + d.police * 2 + hot, sure: false });
   }
   for (const j of s.jobs.filter((x) => x.team.length >= x.minMen)) {
     const win = j.reward.heat ?? 0;
@@ -231,7 +238,7 @@ export function endTurn(s: GameState): LogEntry[] {
   const known = heatForecast(s).lines.filter((l) => l.sure || l.label.startsWith('Assaut'));
   // les assauts sans homme valide n'auront pas lieu
   const firing = new Set(s.orders.filter((o) => s.members.some((m) => o.memberIds.includes(m.id) && m.status === 'actif')).map((o) => `Assaut sur ${district(s, o.districtId).name}`));
-  const knownLines = known.filter((l) => l.sure || firing.has(l.label));
+  const knownLines = known.filter((l) => l.sure || [...firing].some((f) => l.label.startsWith(f)));
   const raidedDistricts = new Set<string>();
   s.fx = [];
   s.day = 0;
@@ -262,9 +269,9 @@ export function endTurn(s: GameState): LogEntry[] {
   s.week += 1;
   generateJobs(s);
 
-  // renouvellement des recrues
-  if (s.recruits.length >= 3) s.recruits.splice(randInt(0, s.recruits.length - 1), 1);
-  while (s.recruits.length < 3) s.recruits.push(makeRecruit(s));
+  // nouvelles recrues chaque semaine
+  s.recruits = [];
+  for (let i = 0; i < RECRUITS_PER_WEEK; i++) s.recruits.push(makeRecruit(s));
 
   if (s.status === 'playing' && chance(0.35)) s.pendingEvent = rollEvent(s);
   return s.lastReport;
@@ -287,7 +294,7 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
     const prevOwner = d.owner;
     const r = prevOwner !== 'neutral' ? rival(s, prevOwner) : undefined;
     const target = r ? `${d.name} (${r.name})` : d.name;
-    s.heat = clamp(s.heat + 5 + d.police * 2, 0, 100);
+    s.heat = clamp(s.heat + 5 + d.police * 2 + men.filter((m) => has(m, 'tetebrulee')).length * 2, 0, 100);
     men.forEach((m) => (m.fatigue = 2));
     fx(s, 'battle', d.id);
 
@@ -299,7 +306,12 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
       d.unrest = 3;
       if (r) {
         r.strength = Math.max(3, r.strength - Math.ceil(defBase * 0.35));
-        r.relation = clamp(r.relation - 30, -100, 100);
+        r.relation = clamp(r.relation - 30 * (donHas(r, 'rancunier') ? 1.5 : 1), -100, 100);
+        r.lossesToPlayer = (r.lossesToPlayer ?? 0) + 1;
+        if (r.lossesToPlayer >= 2 && !donHas(r, 'revanchard')) {
+          (r.traits ??= []).push('revanchard');
+          log(s, 'bad', `${r.boss} devient Revanchard : il te visera en priorité.`);
+        }
       }
       s.respect = clamp(s.respect + (r ? (r.war ? 7 : 5) : 3), 0, 150);
       onConquest(s, d.id);
@@ -314,16 +326,18 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
       fx(s, 'capture', d.id);
       log(s, 'good', `Victoire ! Tes hommes prennent ${target} ${dice}.${holders.length ? '' : " Personne n'y est resté en garde."}`);
       casualties(s, men, 0.2 * ratio, 0.06 * ratio);
+      men.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 4, 'force'));
     } else {
       s.stats.battlesLost++;
       s.respect = clamp(s.respect - 3, 0, 150);
       if (r) {
         r.strength = Math.max(3, r.strength - 1);
-        r.relation = clamp(r.relation - 15, -100, 100);
+        r.relation = clamp(r.relation - 15 * (donHas(r, 'rancunier') ? 1.5 : 1), -100, 100);
       }
       else d.garrison += 1;
       log(s, 'bad', `L'assaut sur ${target} tourne mal ${dice}. Tes hommes se replient.`);
       casualties(s, men, 0.35 * ratio, 0.12 * ratio);
+      men.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 2, 'force'));
     }
   }
 }
@@ -455,6 +469,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
     if (s.lowProfile) p *= 0.3;
     if (!chance(p)) continue;
 
+
     raided.add(d.id);
     s.stats.raids++;
     fx(s, 'raid', d.id);
@@ -472,6 +487,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
     log(s, 'police', `Descente à ${d.name} ! ${BUSINESSES[b.kind].name} fermé(e), ${fmt(seized)} et ${crates} caisses saisis.`);
     news(s, 4, `Descente des Prohis à ${d.name}`, `Un ${BUSINESSES[b.kind].name.toLowerCase()} fermé, l'alcool versé dans le caniveau sous les huées.`);
     for (const m of membersIn(s, d.id)) {
+      if (has(m, 'fantome')) continue;
       if (chance((11 - m.discretion) * 0.05)) {
         m.status = 'prison';
         m.statusWeeks = randInt(3, 6);
@@ -496,7 +512,7 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
       continue;
     }
     // revenus et recrutement
-    r.money += mine.reduce((t, d) => t + d.racket * 0.7 + d.businesses.length * 300, 0);
+    r.money += mine.reduce((t, d) => t + d.racket * 0.7 + d.businesses.length * 300, 0) * (donHas(r, 'riche') ? 1.25 : 1);
     const cap = 10 + mine.length * 10;
     for (let i = 0; i < 2 && r.money >= RIVAL_STRENGTH_COST && r.strength < cap; i++) {
       r.money -= RIVAL_STRENGTH_COST;
@@ -505,7 +521,7 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     if (r.truceWeeks > 0) r.truceWeeks--;
 
     // attaque : la relation avec le joueur décide s'il est une cible
-    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1);
+    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1) * (donHas(r, 'sanguinaire') ? 1.3 : 1);
     if (s.week < 5 || !chance(aggression)) continue;
     const spareFriend = !r.war && r.relation > 30 && chance(0.8);
     const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter((d) => {
@@ -514,10 +530,19 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
       return true;
     });
     if (!targets.length) continue;
-    const score = (d: District) => defenseOf(s, d) - d.racket / 400 - (r.war && d.owner === 'player' ? 8 : 0);
+    const hunt = r.war || donHas(r, 'revanchard');
+    const score = (d: District) => defenseOf(s, d) - d.racket / 400 - (hunt && d.owner === 'player' ? 8 : 0);
     targets.sort((a, b) => score(a) - score(b));
     const target = chance(0.7) ? targets[0] : pick(targets);
     rivalAttack(s, r, target);
+  }
+}
+
+function donWin(s: GameState, r: RivalFamily) {
+  r.wins = (r.wins ?? 0) + 1;
+  if (r.wins >= 3 && !donHas(r, 'aguerri')) {
+    (r.traits ??= []).push('aguerri');
+    log(s, 'neutral', `${r.boss} devient Aguerri après trois victoires : ses quartiers sont mieux défendus.`);
   }
 }
 
@@ -526,7 +551,7 @@ function uniqueDistricts(list: District[]) {
 }
 
 function rivalAttack(s: GameState, r: RivalFamily, d: District) {
-  const power = r.strength * 0.5 * (0.7 + rand() * 0.6);
+  const power = r.strength * 0.5 * (0.7 + rand() * 0.6) * (donHas(r, 'aguerri') ? 1.1 : 1);
   const def = defenseOf(s, d) * (0.8 + rand() * 0.4);
   const defenders = d.owner === 'player' ? membersIn(s, d.id).filter((m) => !committedToAttack(s, m.id)) : [];
   fx(s, 'battle', d.id);
@@ -538,10 +563,12 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
       s.respect = clamp(s.respect - 6, 0, 150);
       s.stats.battlesLost++;
       log(s, 'bad', `${r.name} attaque et s'empare de ${d.name} !`);
+      donWin(s, r);
       fx(s, 'lost', d.id);
       news(s, 5, `${d.name} tombe aux mains de ${r.name}`, `Les hommes de ${r.boss} ont surpris la garde de la ${s.familyName}.`);
       casualties(s, defenders, 0.45, 0.15);
       defenders.forEach((m) => (m.assignment = null));
+      defenders.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 1, 'force'));
     } else {
       r.strength = Math.max(3, r.strength - 2);
       s.respect = clamp(s.respect + 3, 0, 150);
@@ -549,6 +576,7 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
       defenders.forEach((m) => (m.loyalty = clamp(m.loyalty + 3, 0, 100)));
       log(s, 'good', `${r.name} attaque ${d.name}, mais tes hommes repoussent l'assaut.`);
       casualties(s, defenders, 0.15, 0.04);
+      defenders.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 3, 'force'));
     }
     return;
   }
@@ -557,6 +585,7 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
     const prev = d.owner;
     d.owner = r.id;
     d.garrison = 0;
+    donWin(s, r);
     if (prev !== 'neutral') {
       const loser = rival(s, prev)!;
       loser.strength = Math.max(3, loser.strength - 3);
@@ -575,10 +604,11 @@ function crewTurn(s: GameState, raided: Set<string>) {
   for (const d of s.districts) if ((d.unrest ?? 0) > 0) d.unrest!--;
   // les indépendants s'organisent avec le temps
   if (s.week % 6 === 0) s.districts.filter((d) => d.owner === 'neutral').forEach((d) => (d.garrison += 1));
+  const medic = familyCount(s, 'infirmier') > 0;
   for (const m of [...s.members]) {
     if ((m.fatigue ?? 0) > 0) m.fatigue!--;
     if (m.status !== 'actif') {
-      m.statusWeeks--;
+      m.statusWeeks -= m.status === 'blessé' && medic ? 2 : 1;
       if (m.statusWeeks <= 0) {
         m.status = 'actif';
         log(s, 'neutral', `${m.nickname} est de retour.`);
@@ -591,9 +621,10 @@ function crewTurn(s: GameState, raided: Set<string>) {
     if (m.rank === 'soldat' && m.assignment && membersIn(s, m.assignment).some((o) => o.rank === 'capo')) delta += 1;
     if (m.assignment && raided.has(m.assignment)) delta -= 5;
     if (s.heat > 70) delta -= 2;
-    m.loyalty = clamp(m.loyalty + delta, 0, 100);
+    if (has(m, 'cupide')) delta -= 1;
+    m.loyalty = clamp(m.loyalty + delta, has(m, 'fidele') ? 50 : 0, 100);
 
-    if (m.loyalty < 25 && chance(0.3)) betray(s, m);
+    if (m.loyalty < 25 && !has(m, 'fidele') && chance(0.3)) betray(s, m);
   }
 }
 

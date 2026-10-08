@@ -2,6 +2,7 @@
 import { ESCORTS, GOOD_ORDER, GOODS, PRICE_RESALE, PRICE_SMUGGLE, PRICE_WHOLESALER } from './data';
 import { chance, clamp, fx, log, news, nextId, payAny, pendingCrates, pick, rand, stockTotal, storageCap } from './state';
 import type { Escort, GameState, Good } from './types';
+import { familyHas } from './traits';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -23,7 +24,7 @@ export const freeRoom = (s: GameState) => storageCap(s) - stockTotal(s) - pendin
 /** Risque d'interception d'une livraison de contrebande */
 export function shipmentRisk(s: GameState, escort: Escort) {
   const base = 0.1 + s.heat / 300;
-  return clamp(base * ESCORTS[escort].risk * (s.safeRouteWeeks > 0 ? 0.5 : 1), 0, 0.9);
+  return clamp(base * ESCORTS[escort].risk * (s.safeRouteWeeks > 0 ? 0.5 : 1) * (familyHas(s, 'chauffeur') ? 0.7 : 1), 0, 0.9);
 }
 
 /** Part de la cargaison perdue si elle est interceptée */

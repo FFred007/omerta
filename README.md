@@ -39,6 +39,7 @@ Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérive
 - **Argent sale / propre.** Le blanchiment (Max, Moitié, Arrêt) passe le sale restant après les salaires en propre, avec 15 % de commission. Façades et enveloppes se paient en propre.
 - **Territoire.** 9 quartiers en grille 3×3, attaques sur les voisins. Puissance = force des hommes (+2 par capo) + respect/20, contre la défense, ±25 % d'aléa de chaque côté.
 - **Heat.** Monte avec les commerces illégaux, les assauts, les coups et le cash stocké. Au-dessus de 85, les fédéraux peuvent arrêter le Don, sauf juge acheté.
+- **Hommes.** Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat la plus utilisée ; tous les deux niveaux, un trait (Tireur d'élite, Gueule cassée, Fantôme, Comptable, Chauffeur, Négociateur…). Rangs : Recrue, Soldat, Homme de confiance, Vétéran, Capo. Les 4 recrues sont renouvelées chaque semaine, avec leurs traits et parfois un défaut (Bavard, Cupide, Ivrogne, Trouillard). Les Dons rivaux ont aussi des traits, et en gagnent avec leurs victoires (Aguerri) ou leurs défaites contre toi (Revanchard).
 - **Rang.** Petite bande → Famille de quartier → Famille établie → Grande famille → Capo dei Capi, selon le respect.
 - **Victoire :** 9 quartiers, ou 7 quartiers et 100 de respect. **Défaite :** arrestation, plus aucun quartier, ou faillite sans hommes.
 
@@ -56,6 +57,7 @@ src/
   diplomacy.ts  relations, alliances, guerre, Corrano Herald
   events.ts     événements à choix
   street.ts     petites nouvelles de rue (cosmétique)
+  traits.ts     traits, expérience et niveaux des hommes ; traits des Dons
   fx.ts         effets visuels : camions, fusillades, compteurs, une du journal
   ui.ts         rendu et interactions
   style.css     thème feutre, laiton et sang de bœuf

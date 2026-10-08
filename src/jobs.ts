@@ -1,9 +1,10 @@
 // Coups et missions : 3 à 4 opportunités par semaine, une équipe, une chance de réussite exacte
 import { BUSINESSES, GOODS } from './data';
 import {
-  activeMembers, chance, clamp, fx, log, news, nextId, owned, pick, randInt, roll, storageCap, stockTotal, winChance,
+  activeMembers, award, chance, clamp, fx, log, news, nextId, owned, pick, randInt, roll, storageCap, stockTotal, winChance,
 } from './state';
 import type { GameState, Job, JobStat, Member, RivalFamily } from './types';
+import { donHas, has } from './traits';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -14,7 +15,13 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString('fr-FR')}`;
 export function teamSkill(s: GameState, job: Job, ids = job.team) {
   return s.members
     .filter((m) => ids.includes(m.id))
-    .reduce((t, m) => t + (job.stat === 'force' ? m.force : m.discretion) + (m.rank === 'capo' ? 2 : 0), 0);
+    .reduce((t, m) => t + (job.stat === 'force' ? m.force : m.discretion) + (m.rank === 'capo' ? 2 : 0) + traitBonus(m, job.stat), 0);
+}
+
+/** Bonus de traits sur un coup */
+export function traitBonus(m: Member, stat: JobStat) {
+  if (stat === 'force') return has(m, 'brute') ? 2 : 0;
+  return (has(m, 'sangfroid') ? 2 : 0) - (has(m, 'ivrogne') ? 2 : 0);
 }
 
 export const jobChance = (s: GameState, job: Job, ids = job.team) =>
@@ -188,7 +195,7 @@ export function resolveJobs(s: GameState) {
     const b = job.difficulty * roll();
     const dice = `(${odds} % · ${job.stat} ${skill} → ${a.toFixed(1)} contre ${job.difficulty} → ${b.toFixed(1)})`;
     const r = job.rivalId ? s.rivals.find((x) => x.id === job.rivalId) : undefined;
-    if (r && job.relationHit) r.relation = clamp(r.relation - job.relationHit * (a > b ? 1 : 0.5), -100, 100);
+    if (r && job.relationHit) r.relation = clamp(r.relation - job.relationHit * (a > b ? 1 : 0.5) * (donHas(r, 'rancunier') ? 1.5 : 1), -100, 100);
 
     if (a > b) {
       s.stats.jobsDone++;
@@ -217,6 +224,7 @@ export function resolveJobs(s: GameState) {
         }
       }
       men.forEach((m) => (m.loyalty = clamp(m.loyalty + 3, 0, 100)));
+      men.forEach((m) => award(s, m, 3 + (job.difficulty >= 15 ? 1 : 0), job.stat));
       log(s, 'good', `Coup réussi : ${job.title} ${dice}. ${gains.join(', ')}.`);
       if (job.key === 'banque') news(s, 5, 'Braquage spectaculaire en plein jour', 'La Corrano Savings Bank délestée de sa paie. Aucun suspect, aucun témoin.');
       if (job.key === 'boxe') news(s, 2, 'Kid Malone au tapis au 4e round', 'Stupeur au Coliseum. Les parieurs crient au scandale.');
@@ -225,6 +233,7 @@ export function resolveJobs(s: GameState) {
       fx(s, 'jobfail');
       log(s, 'bad', `Coup raté : ${job.title} ${dice}. +${job.failHeat} heat.`);
       consequences(s, men, job.danger, job.stat);
+      men.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 1, job.stat));
       if (job.key === 'banque') news(s, 4, 'Braquage manqué à la Savings Bank', 'Échange de coups de feu devant la banque. Les malfrats s’enfuient les mains vides.');
     }
   }
@@ -234,7 +243,8 @@ export function resolveJobs(s: GameState) {
 function consequences(s: GameState, men: Member[], danger: number, stat: JobStat) {
   for (const m of men) {
     const x = Math.random();
-    if (stat === 'discretion' ? x < danger * 0.5 : x < danger * 0.25) {
+    const jail = (stat === 'discretion' ? danger * 0.5 : danger * 0.25) * (has(m, 'fantome') ? 0.5 : 1);
+    if (x < jail) {
       m.status = 'prison';
       m.statusWeeks = randInt(2, 5);
       if (s.judge) m.statusWeeks = Math.ceil(m.statusWeeks / 2);

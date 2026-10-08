@@ -1,6 +1,7 @@
 // Commerçants : tarif de protection, satisfaction, prêts et faveurs
 import { TARIFFS } from './data';
-import { chance, clamp, district, log, news, owned, randInt, satisfaction } from './state';
+import { chance, clamp, district, log, membersIn, news, owned, randInt, satisfaction } from './state';
+import { has } from './traits';
 import type { GameState, Tariff } from './types';
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -39,6 +40,7 @@ export function shopsTick(s: GameState) {
       if (s.respect >= 60) delta += 1;
       if ((d.unrest ?? 0) > 0) delta -= 1;
       if (s.heat > 70) delta -= 1;
+      if (membersIn(s, d.id).some((m) => has(m, 'beauparleur'))) delta += 2;
       shop.satisfaction = clamp(shop.satisfaction + delta, 0, 100);
     }
     const sat = satisfaction(d);

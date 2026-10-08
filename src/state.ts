@@ -3,6 +3,8 @@ import {
   RIVAL_SEEDS, SHOP_NAMES, SHOP_TRADES, SPEAKEASY_DEMAND, TARIFFS, TRIPOT_WHISKY,
 } from './data';
 import type { District, GameState, Good, Member, Owner, Recruit, LogTone, Shop } from './types';
+import { TRAITS, donHas, donStartTraits, familyCount, familyHas, gainXp, has, rankTitle, rollRecruitTraits } from './traits';
+import type { JobStat } from './types';
 
 export const SAVE_KEY = 'omerta-save-v2';
 export const SAVE_VERSION = 2;
@@ -22,24 +24,34 @@ export function nextId(s: GameState): number {
 function randomIdentity(s: GameState) {
   const used = new Set(s.members.map((m) => m.nickname).concat(s.recruits.map((r) => r.nickname)));
   const free = NICKNAMES.filter((n) => !used.has(n));
+  const names = new Set(s.members.map((m) => m.name).concat(s.recruits.map((r) => r.name)));
+  let name = '';
+  for (let i = 0; i < 30 && (!name || names.has(name)); i++) name = `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`;
   return {
-    name: `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`,
+    name,
     nickname: free.length ? pick(free) : pick(NICKNAMES),
   };
 }
 
 export function makeRecruit(s: GameState): Recruit {
-  const force = randInt(2, 8);
-  const discretion = randInt(2, 8);
+  // parfois un ancien de Chicago ou de Detroit, déjà aguerri
+  const level = Math.random() < 0.15 ? randInt(1, 3) : 0;
+  const force = Math.min(12, randInt(2, 8) + Math.ceil(level / 2));
+  const discretion = Math.min(12, randInt(2, 8) + Math.floor(level / 2));
   const quality = force + discretion;
+  const traits = rollRecruitTraits();
+  const good = traits.filter((x) => TRAITS[x].good).length;
+  const bad = traits.length - good;
   return {
     id: nextId(s),
     ...randomIdentity(s),
     force,
     discretion,
     loyalty: randInt(40, 70),
-    salary: 120 + quality * 18 + randInt(0, 40),
-    cost: 300 + quality * 50,
+    salary: 120 + quality * 18 + level * 25 + randInt(0, 40),
+    cost: Math.max(200, 300 + quality * 50 + good * 180 - bad * 120 + level * 150),
+    traits,
+    level,
   };
 }
 
@@ -63,6 +75,9 @@ function makeMember(s: GameState, partial: Partial<Member>): Member {
     status: 'actif',
     statusWeeks: 0,
     weeksServed: 0,
+    xp: 0,
+    level: 0,
+    traits: [],
     ...partial,
   };
 }
@@ -79,7 +94,7 @@ export function newGame(familyName = 'Famille Moretti'): GameState {
     districts: [],
     members: [],
     recruits: [],
-    rivals: RIVAL_SEEDS.map((r) => ({ ...r })),
+    rivals: RIVAL_SEEDS.map((r) => ({ ...r, traits: donStartTraits(r.id), wins: 0, lossesToPlayer: 0 })),
     orders: [],
     judge: false,
     councilman: false,
@@ -112,12 +127,12 @@ export function newGame(familyName = 'Famille Moretti'): GameState {
   }));
   s.districts.forEach((d) => (d.shops = [makeShop(s, usedNames), makeShop(s, usedNames)]));
   s.members.push(
-    makeMember(s, { name: 'Salvatore Greco', nickname: 'le Vieux', rank: 'capo', force: 6, discretion: 7, loyalty: 80, salary: 450, assignment: 'sicily' }),
-    makeMember(s, { force: 6, discretion: 4, loyalty: 70, salary: 230, assignment: 'sicily' }),
-    makeMember(s, { force: 5, discretion: 5, loyalty: 60, salary: 220 }),
-    makeMember(s, { force: 4, discretion: 6, loyalty: 65, salary: 210 }),
+    makeMember(s, { name: 'Salvatore Greco', nickname: 'le Vieux', rank: 'capo', force: 6, discretion: 7, loyalty: 80, salary: 450, assignment: 'sicily', level: 4, traits: ['fidele', 'negociateur'] }),
+    makeMember(s, { force: 6, discretion: 4, loyalty: 70, salary: 230, assignment: 'sicily', level: 1, traits: ['brute'] }),
+    makeMember(s, { force: 5, discretion: 5, loyalty: 60, salary: 220, traits: [] }),
+    makeMember(s, { force: 4, discretion: 6, loyalty: 65, salary: 210, traits: ['chauffeur'] }),
   );
-  s.recruits = [makeRecruit(s), makeRecruit(s), makeRecruit(s)];
+  s.recruits = [makeRecruit(s), makeRecruit(s), makeRecruit(s), makeRecruit(s)];
   log(s, 'neutral', `${familyName} : ton oncle est tombé pour fraude fiscale. Little Sicily est à toi. Fais-en un empire.`);
   return s;
 }
@@ -164,6 +179,14 @@ export function fx(s: GameState, kind: import('./types').FxKind, d?: string) {
   (s.fx ??= []).push({ kind, d });
 }
 
+/** Expérience + annonce des montées de niveau dans le journal */
+export function award(s: GameState, m: Member, amount: number, stat: JobStat) {
+  for (const up of gainXp(m, amount, stat)) {
+    const t = up.trait ? `, nouveau trait « ${TRAITS[up.trait].name} »` : '';
+    log(s, 'good', `${m.nickname} passe niveau ${m.level} (${rankTitle(m)}) : +1 ${up.stat === 'force' ? 'force' : 'discrétion'}${t}.`);
+  }
+}
+
 export function news(s: GameState, prio: number, title: string, sub = '') {
   s.news.push({ prio, title, sub });
 }
@@ -202,18 +225,19 @@ export function defenseOf(s: GameState, d: District): number {
   const garageBonus = d.businesses.filter((b) => b.kind === 'garage').length * 5;
   if (d.owner === 'player') {
     const men = membersIn(s, d.id).filter((m) => !committedToAttack(s, m.id));
-    return 4 + (d.id === 'sicily' ? 6 : 0) + garageBonus + men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0), 0);
+    return 4 + (d.id === 'sicily' ? 6 : 0) + garageBonus + men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'roc') ? 3 : 0), 0);
   }
   if (d.owner === 'neutral') return d.garrison + garageBonus;
   const r = rival(s, d.owner)!;
   const count = Math.max(1, owned(s, d.owner).length);
-  return Math.round(4 + r.strength / Math.sqrt(count)) + garageBonus;
+  const donBonus = (donHas(r, 'prudent') ? 3 : 0) + (donHas(r, 'aguerri') ? 3 : 0);
+  return Math.round(4 + r.strength / Math.sqrt(count)) + garageBonus + donBonus;
 }
 
 export function attackPower(s: GameState, memberIds: number[]): number {
   const men = s.members.filter((m) => memberIds.includes(m.id));
-  const base = men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0), 0);
-  return Math.round(base + s.respect / 20);
+  const base = men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'tireur') ? 3 : 0) + (has(m, 'tetebrulee') ? 3 : 0) - (has(m, 'trouillard') ? 2 : 0), 0);
+  return Math.max(0, Math.round(base + s.respect / 20));
 }
 
 /** Aléa des combats : chaque camp tire un multiplicateur uniforme dans [0,75 ; 1,25] */
@@ -240,6 +264,9 @@ export function storageCap(s: GameState) {
 }
 export const stockTotal = (s: GameState) => GOOD_ORDER.reduce((t, g) => t + s.stock[g], 0);
 export const pendingCrates = (s: GameState) => s.shipments.reduce((t, x) => t + x.qty, 0);
+
+/** Prix d'une recrue, remise du recruteur comprise */
+export const recruitCost = (s: GameState, r: Recruit) => Math.round(r.cost * (familyHas(s, 'recruteur') ? 0.8 : 1));
 
 export function capoBonus(s: GameState, d: District) {
   return membersIn(s, d.id).some((m) => m.rank === 'capo') ? 1.2 : 1;
@@ -343,6 +370,8 @@ export function projection(s: GameState) {
   }
   dirtyIn = racket + fixed + booze;
   if (s.councilman) launderCap = Math.round(launderCap * 1.25);
+  launderCap = Math.round(launderCap * (1 + 0.1 * familyCount(s, 'comptable')));
+  heatGain += familyCount(s, 'bavard');
   const salaries = activeMembers(s).reduce((t, m) => t + m.salary, 0) + s.members.filter((m) => m.status !== 'actif').reduce((t, m) => t + Math.round(m.salary / 2), 0);
   const bribes =
     owned(s).filter((d) => d.bribedCop).length * 300 + (s.judge ? 800 : 0) + (s.councilman ? 1200 : 0);

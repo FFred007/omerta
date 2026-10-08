@@ -1,5 +1,6 @@
 // Diplomatie avec les autres Dons + une du Corrano Herald
 import { activeMembers, clamp, log, news, pick, rival } from './state';
+import { donHas, familyHas, has } from './traits';
 import type { GameState, RivalFamily } from './types';
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -12,7 +13,7 @@ export const PEACE_COST = 1500;
 export const ALLIANCE_MIN = 40;
 
 export function playerForce(s: GameState) {
-  return activeMembers(s).reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0), 0);
+  return activeMembers(s).reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'tireur') ? 3 : 0), 0);
 }
 
 export function relationLabel(r: RivalFamily) {
@@ -38,7 +39,7 @@ export function sitDown(s: GameState, id: string): Result {
   if (r.talkCooldown > 0) return fail(`${r.boss} ne te recevra pas avant ${r.talkCooldown} semaine(s).`);
   if (s.clean < SIT_DOWN_COST) return fail(`Un dîner chez Benedetti coûte ${SIT_DOWN_COST} $ propres.`);
   s.clean -= SIT_DOWN_COST;
-  const gain = 12 + Math.round(s.respect / 10);
+  const gain = 12 + Math.round(s.respect / 10) + (familyHas(s, 'negociateur') ? 6 : 0) + (donHas(r, 'diplomate') ? 5 : 0);
   r.relation = clamp(r.relation + gain, -100, 100);
   r.talkCooldown = 3;
   log(s, 'neutral', `Dîner avec ${r.boss}. On parle affaires, famille et respect (+${gain} relation).`);
