@@ -1,7 +1,9 @@
 import {
   BUSINESSES, COP_BRIBE, COUNCIL_BRIBE, ESCORTS, GOOD_ORDER, GOODS, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE_COST, SPEAKEASY_DEMAND,
-  TARIFFS, rankOf, weekLabel,
+  TARIFFS, dayLabel, rankOf, weekLabel,
 } from './data';
+import { countUp, dropHerald, playFx, trucks } from './fx';
+import { streetLine } from './street';
 import * as B from './booze';
 import * as D from './diplomacy';
 import * as E from './engine';
@@ -20,7 +22,6 @@ const ui = {
   tab: 'quartier' as Tab,
   selected: 'sicily',
   attackers: new Set<number>(),
-  showReport: false,
   showIntro: false,
   toast: '',
   toastTimer: 0,
@@ -28,10 +29,21 @@ const ui = {
   confirmTimer: 0,
   qty: { biere: 15, gin: 15, whisky: 10 } as Record<Good, number>,
   escort: 'legere' as Escort,
+  // horloge
+  playing: false,
+  progress: 0, // avancement du jour courant, 0..1
+  resolving: false,
+  feed: [] as { id: number; text: string; tone: string; week: number; day: number; born: number }[],
+  feedId: 0,
+  shown: { dirty: 0, clean: 0, respect: 0 }, // valeurs affichées (pour les compteurs animés)
 };
+const SPEEDS = [1, 2, 3];
+const DAY_MS = 2600; // durée d'un jour à vitesse ×1
 
 let s: GameState = load() ?? E.startGame();
 if (s.week === 1 && s.log.length <= 1) ui.showIntro = true;
+ui.shown = { dirty: s.dirty, clean: s.clean, respect: s.respect };
+const speed = () => s.speed ?? 1;
 
 const app = document.getElementById('app')!;
 
@@ -94,6 +106,120 @@ export function render() {
     ${ui.toast ? `<div class="toast" role="status">${esc(ui.toast)}</div>` : ''}
   `;
   if (focusKey) app.querySelector<HTMLElement>(focusKey)?.focus({ preventScroll: true });
+  renderFeed();
+  updateClock();
+  animateCounters();
+}
+
+function animateCounters() {
+  const pairs: [keyof typeof ui.shown, string, (n: number) => string][] = [
+    ['dirty', '.stat-dirty .v', money],
+    ['clean', '.stat-clean .v', money],
+    ['respect', '.stat-respect .v', (n) => String(Math.round(n))],
+  ];
+  for (const [k, sel, f] of pairs) {
+    const el = app.querySelector<HTMLElement>(sel);
+    const to = s[k];
+    if (el && ui.shown[k] !== to) countUp(el, ui.shown[k], to, f);
+    ui.shown[k] = to;
+  }
+}
+
+// ---------- Fil de la ville ----------
+function pushFeed(text: string, tone: string, week = s.week) {
+  ui.feed.unshift({ id: ++ui.feedId, text, tone, week, day: s.day ?? 0, born: Date.now() });
+  if (ui.feed.length > 40) ui.feed.length = 40;
+}
+
+function renderFeed() {
+  const box = app.querySelector<HTMLElement>('#feed');
+  if (!box) return;
+  const now = Date.now();
+  box.innerHTML = ui.feed.length
+    ? ui.feed.slice(0, 7).map((f) => `<li class="tone-${f.tone} ${now - f.born < 700 ? 'fresh' : ''}"><span class="w">${f.tone === 'street' ? 'Rue' : `S${f.week}`}</span>${esc(f.text)}</li>`).join('')
+    : `<li class="tone-street"><span class="w">Rue</span>La ville attend que tu lances l'horloge.</li>`;
+}
+
+// ---------- Horloge ----------
+function blocked() {
+  return ui.showIntro || !!s.pendingEvent || s.status !== 'playing' || ui.resolving || document.hidden;
+}
+
+function updateClock() {
+  const day = s.day ?? 0;
+  const label = app.querySelector<HTMLElement>('#clock-day');
+  if (label) label.textContent = ui.resolving ? `Nuit de dimanche · ${weekLabel(s.week, 6)}` : dayLabel(s.week, day);
+  app.querySelectorAll<HTMLElement>('.daybar i').forEach((el, i) => {
+    const fill = i < day ? 1 : i === day ? ui.progress : 0;
+    el.style.setProperty('--fill', String(ui.resolving ? 1 : fill));
+    el.classList.toggle('today', i === day && !ui.resolving);
+  });
+  const btn = app.querySelector<HTMLElement>('[data-act="play"]');
+  if (btn) {
+    const waiting = ui.playing && blocked() && !ui.resolving;
+    btn.textContent = ui.playing ? (waiting ? 'En attente' : 'Pause') : 'Lecture';
+    btn.setAttribute('aria-pressed', String(ui.playing));
+    btn.classList.toggle('pulse', !ui.playing && s.status === 'playing');
+  }
+}
+
+let last = performance.now();
+function tick(now: number) {
+  const dt = Math.min(250, now - last);
+  last = now;
+  if (ui.playing && !blocked()) {
+    ui.progress += (dt * speed()) / DAY_MS;
+    if (ui.progress >= 1) {
+      ui.progress = 0;
+      nextDay();
+    }
+    updateClock();
+  }
+  requestAnimationFrame(tick);
+}
+
+function nextDay() {
+  const day = (s.day ?? 0) + 1;
+  if (day >= 7) {
+    resolveWeek();
+    return;
+  }
+  s.day = day;
+  if (Math.random() < 0.8) pushFeed(streetLine(s), 'street');
+  if (day === 3) {
+    E.midweek(s);
+    if (s.pendingEvent) return render();
+  }
+  save(s);
+  renderFeed();
+}
+
+/** Nuit de dimanche : les camions roulent, puis la semaine se résout et ses effets se jouent sur la carte */
+function resolveWeek() {
+  if (ui.resolving || s.status !== 'playing' || s.pendingEvent) return;
+  ui.resolving = true;
+  ui.progress = 0;
+  document.querySelector('.map')?.classList.add('night');
+  updateClock();
+  const home = owned(s).find((d) => d.id === 'sicily')?.id ?? owned(s)[0]?.id ?? 'sicily';
+  const nightMs = s.shipments.length ? 1500 / speed() : 500 / speed();
+  trucks(s.shipments.length, home, nightMs);
+  window.setTimeout(() => {
+    E.endTurn(s);
+    ui.attackers.clear();
+    if (district(s, ui.selected).owner !== 'player' && !isAttackable(s, district(s, ui.selected))) ui.selected = owned(s)[0]?.id ?? ui.selected;
+    ui.resolving = false;
+    render();
+    const fxEvents = s.fx ?? [];
+    const dur = playFx(fxEvents, speed(), home);
+    // les nouvelles arrivent une à une dans le fil
+    const entries = s.lastReport.filter((e) => !e.text.includes('ton oncle est tombé'));
+    entries.forEach((e, i) => window.setTimeout(() => { pushFeed(e.text, e.tone, e.week); renderFeed(); }, (i * 180) / speed()));
+    const h = s.headlines[0];
+    if (h && h.week === s.week - 1) {
+      window.setTimeout(() => dropHerald(herald(h, true), () => { ui.tab = 'journal'; render(); }), Math.min(dur, 1200));
+    }
+  }, nightMs);
 }
 
 function topbar() {
@@ -102,13 +228,13 @@ function topbar() {
   <header class="topbar">
     <div class="brand">
       <h1>Omertà</h1>
-      <span class="date">${esc(s.familyName)} · ${rankOf(s.respect)} · semaine ${s.week} · ${weekLabel(s.week)}</span>
+      <span class="date">${esc(s.familyName)} · ${rankOf(s.respect)} · semaine ${s.week}</span>
     </div>
     <div class="ledger-strip">
-      <div class="stat"><span class="k">Argent sale</span><span class="v dirty">${money(s.dirty)}</span></div>
-      <div class="stat"><span class="k">Argent propre</span><span class="v clean">${money(s.clean)}</span></div>
+      <div class="stat stat-dirty"><span class="k">Argent sale</span><span class="v dirty">${money(ui.shown.dirty)}</span></div>
+      <div class="stat stat-clean"><span class="k">Argent propre</span><span class="v clean">${money(ui.shown.clean)}</span></div>
       <div class="stat"><span class="k">Caisses</span><span class="v">${stockTotal(s)}<small class="muted">/${storageCap(s)}</small></span></div>
-      <div class="stat"><span class="k">Respect</span><span class="v">${s.respect}</span></div>
+      <div class="stat stat-respect"><span class="k">Respect</span><span class="v">${Math.round(ui.shown.respect)}</span></div>
       <div class="stat"><span class="k">Faveurs</span><span class="v">${s.favors}</span></div>
       <div class="stat heat"><span class="k">Heat <span class="num ${heatTone}">${s.heat}/100</span></span>
         <div class="heat-bar" role="meter" aria-valuenow="${s.heat}" aria-valuemin="0" aria-valuemax="100" aria-label="Heat"><i style="width:${s.heat}%"></i></div>
@@ -165,6 +291,10 @@ function mapView() {
     <div class="map-title"><h2>New Corrano</h2><span class="muted" style="font-size:13px">${busy ? esc(busy) + ' · ' : ''}${owned(s).length} / 9 quartiers</span></div>
     <div class="map">${tiles}</div>
     <div class="legend">${legend}</div>
+    <div class="feed-wrap">
+      <h3 class="feed-title">Le fil de la ville</h3>
+      <ul id="feed" class="log feed" aria-live="polite"></ul>
+    </div>
   </div>`;
 }
 
@@ -218,9 +348,18 @@ function weekCard() {
     </div>` : ''}
     <div class="heat-line"><span>Variation de heat (hors combats et coups)</span><span class="num ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span></div>
     <div class="end-dock">
-      <button class="btn primary end-turn" data-act="end" ${blocked ? 'disabled' : ''}>
-        ${label ? `Fin de semaine · ${label}` : 'Fin de semaine'}
-      </button>
+      <div class="clock" role="group" aria-label="Horloge">
+        <div class="clock-top">
+          <span id="clock-day" class="clock-day"></span>
+          <span class="muted clock-plan">${label ? esc(label) + ' prévus dimanche' : ''}</span>
+        </div>
+        <div class="daybar" aria-hidden="true">${[0, 1, 2, 3, 4, 5, 6].map((i) => `<i class="${i === 6 ? 'sun' : ''}"></i>`).join('')}</div>
+        <div class="clock-ctrl">
+          <button class="btn primary play" data-act="play" ${blocked ? 'disabled' : ''}>Lecture</button>
+          <span class="seg">${SPEEDS.map((v) => `<button class="btn small ${speed() === v ? 'on' : ''}" data-act="speed" data-id="${v}" aria-pressed="${speed() === v}" aria-label="Vitesse ×${v}">×${v}</button>`).join('')}</span>
+          <button class="btn small skip" data-act="end" ${blocked ? 'disabled' : ''}>Aller à dimanche soir</button>
+        </div>
+      </div>
     </div>
   </div>`;
 }
@@ -672,18 +811,10 @@ function modals() {
       <div class="actions"><button class="btn primary" data-act="start">Prendre la relève</button></div>
     </div></div>`;
   }
-  if (ui.showReport && s.lastReport.length) {
-    const h = s.headlines[0];
-    return `<div class="overlay"><div class="modal report" role="dialog" aria-modal="true">
-      ${h && h.week === s.week - 1 ? herald(h, true) : ''}
-      <h2>Rapport · semaine ${s.week - 1}</h2>
-      <ul class="log">${s.lastReport.map((e) => `<li class="tone-${e.tone}">${esc(e.text)}</li>`).join('')}</ul>
-      <div class="actions"><button class="btn primary" data-act="close-report">${s.pendingEvent ? 'Suite' : 'Continuer'}</button></div>
-    </div></div>`;
-  }
   if (s.pendingEvent) {
     const ev = s.pendingEvent;
     return `<div class="overlay"><div class="modal" role="dialog" aria-modal="true">
+      <p class="muted when">${dayLabel(s.week, s.day ?? 0)} · l'horloge attend ta décision</p>
       <h2>${esc(ev.title)}</h2><p>${esc(ev.text)}</p>
       <div class="choices">${ev.choices.map((c) => `
         <button class="choice" data-act="choice" data-id="${c.effect}" ${c.disabled ? 'disabled' : ''}><b>${esc(c.label)}</b><span>${esc(c.hint)}</span></button>`).join('')}
@@ -694,7 +825,7 @@ function modals() {
 
 function rulesList() {
   return `
-    <li>Une semaine par tour. Donne tes ordres, puis clique sur « Fin de semaine ».</li>
+    <li><b>Le temps passe</b> : lance l'horloge, les jours défilent (×1, ×2, ×3). Tes ordres se jouent dans la nuit de dimanche. Les décisions importantes mettent le jeu en pause.</li>
     <li><b>Alcool</b> : tes speakeasies vendent les caisses que tu leur fournis. Achète par le lac (moins cher, risqué) ou au grossiste, et revends en gros quand les prix flambent.</li>
     <li><b>Coups</b> : chaque semaine, de nouvelles opportunités. Choisis l'équipe, la chance est affichée.</li>
     <li><b>Commerçants</b> : règle le tarif de protection. Rends-leur service, ils te devront des faveurs.</li>
@@ -792,15 +923,9 @@ app.addEventListener('click', (ev) => {
       return run(r);
     }
     case 'cancel-attack': ui.attackers.clear(); return run(E.cancelAttack(s, id));
-    case 'end': {
-      E.endTurn(s);
-      ui.attackers.clear();
-      if (district(s, ui.selected).owner !== 'player' && !isAttackable(s, district(s, ui.selected))) ui.selected = owned(s)[0]?.id ?? ui.selected;
-      ui.showReport = true;
-      window.scrollTo({ top: 0 });
-      return render();
-    }
-    case 'close-report': ui.showReport = false; return render();
+    case 'end': return resolveWeek();
+    case 'play': ui.playing = !ui.playing; return updateClock();
+    case 'speed': s.speed = Number(id); save(s); return render();
     case 'choice': resolveEvent(s, id); return render();
     case 'help': ui.showIntro = true; return render();
     case 'start': {
@@ -810,6 +935,7 @@ app.addEventListener('click', (ev) => {
         s.log.forEach((e) => (e.text = e.text.replace(/^Famille \S+/, s.familyName)));
       }
       ui.showIntro = false;
+      ui.playing = true;
       return render();
     }
     case 'restart':
@@ -821,8 +947,11 @@ app.addEventListener('click', (ev) => {
       ui.selected = 'sicily';
       ui.tab = 'quartier';
       ui.attackers.clear();
-      ui.showReport = false;
       ui.showIntro = true;
+      ui.playing = false;
+      ui.progress = 0;
+      ui.feed = [];
+      ui.shown = { dirty: s.dirty, clean: s.clean, respect: s.respect };
       return render();
   }
 });
@@ -848,8 +977,12 @@ app.addEventListener('change', (ev) => {
 });
 
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && ui.showReport) {
-    ui.showReport = false;
-    render();
+  const tag = (ev.target as HTMLElement).tagName;
+  if (ev.key === ' ' && tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'BUTTON' && !blocked()) {
+    ev.preventDefault();
+    ui.playing = !ui.playing;
+    updateClock();
   }
 });
+document.addEventListener('visibilitychange', () => updateClock());
+requestAnimationFrame(tick);

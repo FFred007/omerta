@@ -160,6 +160,10 @@ export function payAny(s: GameState, amount: number): boolean {
   return true;
 }
 
+export function fx(s: GameState, kind: import('./types').FxKind, d?: string) {
+  (s.fx ??= []).push({ kind, d });
+}
+
 export function news(s: GameState, prio: number, title: string, sub = '') {
   s.news.push({ prio, title, sub });
 }

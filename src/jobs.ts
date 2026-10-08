@@ -1,7 +1,7 @@
 // Coups et missions : 3 à 4 opportunités par semaine, une équipe, une chance de réussite exacte
 import { BUSINESSES, GOODS } from './data';
 import {
-  activeMembers, chance, clamp, log, news, nextId, owned, pick, randInt, roll, storageCap, stockTotal, winChance,
+  activeMembers, chance, clamp, fx, log, news, nextId, owned, pick, randInt, roll, storageCap, stockTotal, winChance,
 } from './state';
 import type { GameState, Job, JobStat, Member, RivalFamily } from './types';
 
@@ -192,6 +192,7 @@ export function resolveJobs(s: GameState) {
 
     if (a > b) {
       s.stats.jobsDone++;
+      fx(s, 'job');
       const w = job.reward;
       const gains: string[] = [];
       if (w.dirty) { s.dirty += w.dirty; gains.push(`+${fmt(w.dirty)} sale`); }
@@ -221,6 +222,7 @@ export function resolveJobs(s: GameState) {
       if (job.key === 'boxe') news(s, 2, 'Kid Malone au tapis au 4e round', 'Stupeur au Coliseum. Les parieurs crient au scandale.');
     } else {
       s.heat = clamp(s.heat + job.failHeat, 0, 100);
+      fx(s, 'jobfail');
       log(s, 'bad', `Coup raté : ${job.title} ${dice}. +${job.failHeat} heat.`);
       consequences(s, men, job.danger, job.stat);
       if (job.key === 'banque') news(s, 4, 'Braquage manqué à la Savings Bank', 'Échange de coups de feu devant la banque. Les malfrats s’enfuient les mains vides.');

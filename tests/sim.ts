@@ -69,6 +69,13 @@ function botTurn(s: GameState) {
   for (const r of s.rivals) if (r.war && s.clean > 4000) D.makePeace(s, r.id);
 }
 
+function resolveAll(s: GameState) {
+  for (let ev = s.pendingEvent; ev; ev = s.pendingEvent) {
+    const en = ev.choices.filter((x) => !x.disabled);
+    resolveEvent(s, (ARGS.includes('--last') ? en[en.length - 1] : en[0]).effect);
+  }
+}
+
 const MAX_WEEKS = 150;
 const results = { won: 0, lost: 0, ongoing: 0 };
 const reasons: Record<string, number> = {};
@@ -86,6 +93,8 @@ for (let g = 0; g < N; g++) {
       continue;
     }
     botTurn(s);
+    E.midweek(s);
+    resolveAll(s);
     E.endTurn(s);
     totalWeeks++;
     if (s.lastReport.some((e) => e.text.startsWith('Rupture'))) shortageWeeks++;

@@ -30,7 +30,7 @@ Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérive
 
 ## Règles
 
-- **Tour = 1 semaine.** Tu donnes tes ordres, puis « Fin de semaine ».
+- **Le temps passe.** Une horloge fait défiler les jours (×1, ×2, ×3, pause, barre d'espace). Les ordres de la semaine se jouent la nuit de dimanche, avec des effets sur la carte (camions, fusillades, descentes, conquêtes) et un fil de la ville en direct. Les décisions (événements du jeudi et du dimanche) mettent le jeu en pause. « Aller à dimanche soir » résout la semaine tout de suite.
 - **Alcool.** Les speakeasies vendent jusqu'à 18 caisses par semaine de ton stock (whisky, puis gin, puis bière), à un prix qui dépend de la clientèle du quartier. Sans stock, ils ne rapportent que l'entrée. Achat par le lac (−40 % sur le prix du marché, livré la nuit, risque d'interception réduit par l'escorte) ou au grossiste (immédiat, sûr, plus cher). Revente en gros pour profiter des pénuries. Les prix bougent chaque semaine avec des chocs (pénurie à Chicago, canicule…). La distillerie produit du gin, l'entrepôt ajoute du stockage.
 - **Coups.** 3 ou 4 opportunités par semaine (dette, boxe truquée, braquage, témoin, camion ou cave d'un rival, incendie…). Une équipe, une stat (force ou discrétion), une chance exacte. Échec : heat, blessures ou prison.
 - **Commerçants.** Deux par quartier. Tarif de protection bas, normal ou élevé, qui fait varier leur satisfaction. Sous 30 : protection ×0,6, plus de descentes, dénonciations. À 70 et plus : moins de descentes et +1 respect par semaine. Leurs demandes rapportent des **faveurs** (libérer un homme, alibi −12 heat) et parfois des prêts remboursés avec intérêts.
@@ -55,6 +55,8 @@ src/
   shops.ts      commerçants, tarifs, faveurs
   diplomacy.ts  relations, alliances, guerre, Corrano Herald
   events.ts     événements à choix
+  street.ts     petites nouvelles de rue (cosmétique)
+  fx.ts         effets visuels : camions, fusillades, compteurs, une du journal
   ui.ts         rendu et interactions
   style.css     thème feutre, laiton et sang de bœuf
 tests/          simulation, prévisions, calibration

@@ -6,7 +6,7 @@ import { generateJobs, resolveJobs } from './jobs';
 import { onConquest, raidMood, shopsTick } from './shops';
 import {
   activeMembers, attackPower, chance, roll, winChance, clamp, committedToAttack, defenseOf, district, isAttackable, log,
-  makeRecruit, membersIn, neighbors, newGame, news, nextId, owned, pick, projection, rand, randInt, rival, satisfaction,
+  fx, makeRecruit, membersIn, neighbors, newGame, news, nextId, owned, pick, projection, rand, randInt, rival, satisfaction,
 } from './state';
 import { GOOD_ORDER, GOODS } from './data';
 import type { BusinessKind, District, GameState, LogEntry, Member, RivalFamily } from './types';
@@ -164,6 +164,12 @@ export function toggleLowProfile(s: GameState): ActionResult {
   return ok;
 }
 
+/** Milieu de semaine : une chance qu'un événement vienne demander une décision */
+export function midweek(s: GameState) {
+  if (s.status !== 'playing' || s.pendingEvent) return;
+  if (chance(0.4)) s.pendingEvent = rollEvent(s);
+}
+
 export function startGame(familyName?: string) {
   const s = newGame(familyName);
   generateJobs(s);
@@ -178,6 +184,8 @@ export function endTurn(s: GameState): LogEntry[] {
   if (s.status !== 'playing' || s.pendingEvent) return [];
   const week = s.week;
   const raidedDistricts = new Set<string>();
+  s.fx = [];
+  s.day = 0;
 
   const conquered = new Set<string>();
   resolvePlayerAttacks(s, conquered);
@@ -204,7 +212,7 @@ export function endTurn(s: GameState): LogEntry[] {
   if (s.recruits.length >= 3) s.recruits.splice(randInt(0, s.recruits.length - 1), 1);
   while (s.recruits.length < 3) s.recruits.push(makeRecruit(s));
 
-  if (s.status === 'playing' && chance(0.55)) s.pendingEvent = rollEvent(s);
+  if (s.status === 'playing' && chance(0.35)) s.pendingEvent = rollEvent(s);
   return s.lastReport;
 }
 
@@ -227,6 +235,7 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
     const target = r ? `${d.name} (${r.name})` : d.name;
     s.heat = clamp(s.heat + 5 + d.police * 2, 0, 100);
     men.forEach((m) => (m.fatigue = 2));
+    fx(s, 'battle', d.id);
 
     if (power > def) {
       s.stats.battlesWon++;
@@ -248,6 +257,7 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
       men.forEach((m) => (m.loyalty = clamp(m.loyalty + 4, 0, 100)));
       holders.forEach((m) => (m.assignment = d.id));
       conquered.add(d.id);
+      fx(s, 'capture', d.id);
       log(s, 'good', `Victoire ! Tes hommes prennent ${target} ${dice}.${holders.length ? '' : " Personne n'y est resté en garde."}`);
       casualties(s, men, 0.2 * ratio, 0.06 * ratio);
     } else {
@@ -344,6 +354,7 @@ function economy(s: GameState) {
     const detail = GOOD_ORDER.filter((g) => p.plan.sold[g]).map((g) => `${p.plan.sold[g]} ${GOODS[g].plural}`).join(', ');
     log(s, 'money', `Tes établissements écoulent ${crates} caisses (${detail}) : +${fmt(p.booze)}.`);
   }
+  new Set(p.plan.outlets.filter((o) => o.revenue > 0).map((o) => o.districtId)).forEach((id) => fx(s, 'sale', id));
   if (p.plan.shortage) log(s, 'bad', `Rupture de stock : ${p.plan.shortage} caisses manquaient dans tes speakeasies. Des clients sont partis chez la concurrence.`);
   if (s.lowProfile) log(s, 'neutral', 'Profil bas : tous les commerces illégaux sont restés fermés.');
   if (f.launderTaken > 0) log(s, 'money', `${fmt(f.launderTaken)} d'argent sale blanchis via tes façades (+${fmt(f.launderGiven)} propre).`);
@@ -392,6 +403,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
 
     raided.add(d.id);
     s.stats.raids++;
+    fx(s, 'raid', d.id);
     const b = pick(illegal);
     d.businesses = d.businesses.filter((x) => x.id !== b.id);
     const seized = Math.min(s.dirty, 400 * d.police);
@@ -463,6 +475,7 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
   const power = r.strength * 0.5 * (0.7 + rand() * 0.6);
   const def = defenseOf(s, d) * (0.8 + rand() * 0.4);
   const defenders = d.owner === 'player' ? membersIn(s, d.id).filter((m) => !committedToAttack(s, m.id)) : [];
+  fx(s, 'battle', d.id);
 
   if (d.owner === 'player') {
     if (power > def) {
@@ -471,6 +484,7 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
       s.respect = clamp(s.respect - 6, 0, 150);
       s.stats.battlesLost++;
       log(s, 'bad', `${r.name} attaque et s'empare de ${d.name} !`);
+      fx(s, 'lost', d.id);
       news(s, 5, `${d.name} tombe aux mains de ${r.name}`, `Les hommes de ${r.boss} ont surpris la garde de la ${s.familyName}.`);
       casualties(s, defenders, 0.45, 0.15);
       defenders.forEach((m) => (m.assignment = null));

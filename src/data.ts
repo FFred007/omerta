@@ -144,11 +144,15 @@ export const NICKNAMES = [
 
 export const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
 
-export function weekLabel(week: number): string {
-  const totalDays = (week - 1) * 7;
+export const DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+
+export function weekLabel(week: number, dayOffset = 0): string {
+  const totalDays = (week - 1) * 7 + dayOffset;
   const year = START_YEAR + Math.floor(totalDays / 364);
   const dayOfYear = totalDays % 364;
   const month = Math.min(11, Math.floor(dayOfYear / 30.34));
   const day = Math.floor(dayOfYear - month * 30.34) + 1;
   return `${day} ${MONTHS[month]} ${year}`;
 }
+
+export const dayLabel = (week: number, day: number) => `${DAYS[day]} ${weekLabel(week, day)}`;

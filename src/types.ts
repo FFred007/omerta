@@ -215,6 +215,11 @@ export interface GameState {
   headlines: Headline[];
   news: { prio: number; title: string; sub: string }[];
   lastEventKey?: string;
+  /** jour de la semaine en cours (0 = lundi … 6 = dimanche) */
+  day?: number;
+  speed?: number;
+  /** effets visuels produits par la dernière résolution */
+  fx?: FxEvent[];
   pendingEvent: PendingEvent | null;
   log: LogEntry[];
   lastReport: LogEntry[];
@@ -223,3 +228,6 @@ export interface GameState {
   endReason: string;
   stats: { battlesWon: number; battlesLost: number; laundered: number; raids: number; jobsDone: number; cratesSold: number };
 }
+
+export type FxKind = 'battle' | 'capture' | 'lost' | 'raid' | 'ship' | 'intercept' | 'job' | 'jobfail' | 'sale';
+export interface FxEvent { kind: FxKind; d?: string }

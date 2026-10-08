@@ -1,6 +1,6 @@
 // Contrebande d'alcool : achats, livraisons, revente, marché
 import { ESCORTS, GOOD_ORDER, GOODS, PRICE_RESALE, PRICE_SMUGGLE, PRICE_WHOLESALER } from './data';
-import { chance, clamp, log, news, nextId, payAny, pendingCrates, pick, rand, stockTotal, storageCap } from './state';
+import { chance, clamp, fx, log, news, nextId, payAny, pendingCrates, pick, rand, stockTotal, storageCap } from './state';
 import type { Escort, GameState, Good } from './types';
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -79,6 +79,7 @@ export function resolveShipments(s: GameState) {
     const name = GOODS[sh.good].plural;
     let qty = sh.qty;
     if (chance(shipmentRisk(s, sh.escort))) {
+      fx(s, 'intercept');
       const lost = Math.ceil(qty * LOSS_IF_CAUGHT[sh.escort]);
       qty -= lost;
       const living = s.rivals.filter((r) => r.alive && !r.alliance);
@@ -98,6 +99,7 @@ export function resolveShipments(s: GameState) {
     if (qty > 0) {
       const room = Math.max(0, cap - stockTotal(s));
       const stored = Math.min(qty, room);
+      fx(s, 'ship');
       s.stock[sh.good] += stored;
       log(s, 'money', `${stored} caisses de ${name} livrées à l'entrepôt.${stored < qty ? ` ${qty - stored} perdues faute de place.` : ''}`);
     }
