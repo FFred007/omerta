@@ -11,7 +11,11 @@ export const DOSSIER_ARREST = 2; // un homme arrêté peut parler
 export const DOSSIER_RAT = 10; // un traître passé à la police
 export { DON_SEEN_HEAT };
 
-export function addDossier(s: GameState, n: number, label: string) {
+/** Insaisissable : tout ce qui fait monter le dossier compte moitié moins */
+const halve = (s: GameState, n: number) => (n > 0 && donHasTalent(s, 'r_insaisissable') ? Math.ceil(n / 2) : n);
+
+export function addDossier(s: GameState, n: number, label: string, raw = false) {
+  if (!raw) n = halve(s, n);
   if (!n) return;
   s.dossier = clamp((s.dossier ?? 0) + n, 0, 100);
   (s.dossierWeek ??= []).push({ label, value: n });
@@ -31,11 +35,11 @@ export function dossierForecast(s: GameState) {
   if (cap) lines.push({ label: `Tes amis de Washburn (${cap} quartier${cap > 1 ? 's' : ''})`, value: -cap });
   const net = networkDossier(s);
   if (net) lines.push({ label: 'Ton réseau dans la justice', value: net });
-  return lines;
+  return lines.map((l) => ({ ...l, value: halve(s, l.value) }));
 }
 
 export function dossierTick(s: GameState) {
-  for (const l of dossierForecast(s)) addDossier(s, l.value, l.label);
+  for (const l of dossierForecast(s)) addDossier(s, l.value, l.label, true);
   if ((s.dossier ?? 0) >= 100 && !s.trial && s.status === 'playing' && donOf(s)) {
     if (isActive(s, 'agent') && !s.agentWarned) {
       s.agentWarned = true;

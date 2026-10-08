@@ -32,7 +32,7 @@ export const TALENTS: TalentDef[] = [
   { id: 'r_comptes', branch: 'renard', tier: 2, name: 'Comptabilité créative', desc: 'Commission de blanchiment 8 % au lieu de 15 %' },
   { id: 'r_avocat', branch: 'renard', tier: 3, name: 'Avocat de la famille', desc: 'Peines de prison de tes hommes ÷2' },
   { id: 'r_ombre', branch: 'renard', tier: 4, name: 'Homme de l’ombre', desc: 'Descentes de police −20 %' },
-  { id: 'r_insaisissable', branch: 'renard', tier: 5, name: 'Insaisissable', desc: 'Risque d’inculpation fédérale ÷2' },
+  { id: 'r_insaisissable', branch: 'renard', tier: 5, name: 'Insaisissable', desc: 'Tout ce qui fait monter le dossier fédéral compte moitié moins' },
   { id: 'p_respect', branch: 'parrain', tier: 1, name: 'Respect', desc: '+1 respect par semaine' },
   { id: 'p_parole', branch: 'parrain', tier: 2, name: 'La parole du Don', desc: '+1 loyauté par semaine pour tous tes hommes' },
   { id: 'p_commercants', branch: 'parrain', tier: 3, name: 'Ami des commerçants', desc: '+1 satisfaction par semaine dans tous tes quartiers' },
