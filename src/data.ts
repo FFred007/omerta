@@ -108,7 +108,7 @@ export const COUNCIL_BRIBE = 1200;
 export const PROMOTE_COST = 1000;
 export const DIRTY_STASH_LIMIT = 10000;
 
-type DistrictSeed = Omit<District, 'businesses' | 'bribedCop' | 'shops' | 'tariff'> & { businesses: BusinessKind[] };
+export type DistrictSeed = Omit<District, 'businesses' | 'bribedCop' | 'shops' | 'tariff'> & { businesses: BusinessKind[] };
 
 // ---------- Villes ----------
 export interface CityDef {
@@ -189,6 +189,28 @@ export const DISTRICT_SEEDS: DistrictSeed[] = [
     flavor: 'Marins en permission et contrats d’armement. Les dockers ont leur syndicat.' },
   { id: 'w_ambassades', city: 'washburn', wealth: 1.35, name: 'Les Ambassades', row: 1, col: 1, owner: 'whitmore', racket: 900, police: 2, slots: 3, garrison: 0, businesses: ['speakeasy'],
     flavor: 'Immunité diplomatique et valises scellées : le champagne français y coule à flots.' },
+];
+
+/** Quartiers supplémentaires : la carte générée en pioche une partie à chaque nouvelle partie */
+export const EXTRA_SEEDS: DistrictSeed[] = [
+  { id: 'chinatown', wealth: 0.95, name: 'Le Quartier chinois', row: 0, col: 0, owner: 'neutral', racket: 550, police: 1, slots: 3, garrison: 11, businesses: ['paris'],
+    flavor: 'Fumeries, lanternes et tripots cachés derrière les blanchisseries. Les tongs paient qui les protège.' },
+  { id: 'cathedrale', wealth: 1.15, name: 'Saint-Janvier', row: 0, col: 0, owner: 'neutral', racket: 650, police: 2, slots: 2, garrison: 12, businesses: ['restaurant'],
+    flavor: 'La cathédrale, les processions, et les meilleures pâtisseries de la ville. Le curé sait tout.' },
+  { id: 'acieries', wealth: 0.8, name: 'Les Aciéries', row: 0, col: 0, owner: 'neutral', racket: 500, police: 1, slots: 3, garrison: 10, businesses: ['speakeasy'],
+    flavor: 'Hauts fourneaux et ouvriers assoiffés. La paie tombe le vendredi, les bars se remplissent le soir même.' },
+  { id: 'h_douane', city: 'halloran', wealth: 1.05, name: 'La Douane', row: 0, col: 0, owner: 'neutral', racket: 650, police: 2, slots: 3, garrison: 12, businesses: ['entrepot'],
+    flavor: 'Les douaniers sont mal payés. Les registres sont tenus au crayon.' },
+  { id: 'h_criques', city: 'halloran', wealth: 0.85, name: 'Les Criques', row: 0, col: 0, owner: 'neutral', racket: 400, police: 1, slots: 3, garrison: 8, businesses: ['distillerie'],
+    flavor: 'Des canots sans feux, des pêcheurs qui ne pêchent jamais rien.' },
+  { id: 'm_motels', city: 'mirage', wealth: 0.95, name: 'Les Motels', row: 0, col: 0, owner: 'neutral', racket: 450, police: 1, slots: 3, garrison: 9, businesses: ['speakeasy'],
+    flavor: 'Néons roses et chambres à l’heure. On y paie en jetons de casino.' },
+  { id: 'm_barrage', city: 'mirage', wealth: 0.85, name: 'Le Barrage', row: 0, col: 0, owner: 'neutral', racket: 500, police: 1, slots: 3, garrison: 10, businesses: ['paris'],
+    flavor: 'Cinq mille ouvriers coulent du béton dans le désert. Ils parient leur paie sur tout.' },
+  { id: 'w_vieux', city: 'washburn', wealth: 1.0, name: 'Le Vieux Quartier', row: 0, col: 0, owner: 'neutral', racket: 550, police: 1, slots: 3, garrison: 10, businesses: ['speakeasy'],
+    flavor: 'Pavés, tavernes et maisons de briques. Les sénateurs y viennent incognito.' },
+  { id: 'w_universite', city: 'washburn', wealth: 1.2, name: 'L’Université', row: 0, col: 0, owner: 'neutral', racket: 600, police: 2, slots: 3, garrison: 11, businesses: [],
+    flavor: 'Fils de bonne famille et clubs étudiants. Ils boivent comme des marins et paient comme des princes.' },
 ];
 
 export const RIVAL_SEEDS: RivalFamily[] = [

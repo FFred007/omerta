@@ -4,6 +4,8 @@ import { donOf } from './don';
 import { ORIGINS, SPOUSE_TRAITS, makeCandidate, resolveFamilyEffect, startCourtship, type SpouseOrigin } from './family';
 import { resolveTrialEffect } from './dossier';
 import { resolvePressureEffect } from './pressure';
+import { resolveBondEffect } from './bonds';
+import { hunter, hunterProgress, resolveHunterEffect } from './hunters';
 import { activeMembers, chance, clamp, district, log, neighbors, news, nextId, owned, pick, rival, stockTotal, storageCap } from './state';
 import type { GameState, PendingEvent, Shop } from './types';
 
@@ -29,8 +31,8 @@ const EVENTS: EventDef[] = [
     key: 'journaliste', weight: 3, when: () => true,
     build: (s) => ({
       key: 'journaliste',
-      title: 'Un journaliste fouineur',
-      text: "Un reporter du Corrano Herald pose des questions sur les « affaires » de la " + s.familyName + ". Son article sort lundi.",
+      title: `${hunter(s, 'journaliste').name} pose des questions`,
+      text: `${hunter(s, 'journaliste').name} (${hunter(s, 'journaliste').title}) interroge tes commerçants sur les « affaires » de la ${s.familyName}. Son article sort lundi.`,
       choices: [
         { label: 'Acheter son silence', hint: '-500 propre, -5 heat', effect: 'j_pay', disabled: s.clean < 500 },
         { label: "L'intimider", hint: '+3 respect, +6 heat', effect: 'j_scare' },
@@ -361,7 +363,7 @@ export function resolveEvent(s: GameState, effect: string) {
   const respect = (n: number) => (s.respect = clamp(s.respect + n, 0, 150));
   const allLoyalty = (n: number) => activeMembers(s).forEach((m) => (m.loyalty = clamp(m.loyalty + n, 0, 100)));
 
-  if (resolveTrialEffect(s, effect) || resolvePressureEffect(s, effect, ev) || resolveFamilyEffect(s, effect, ev)) {
+  if (resolveTrialEffect(s, effect) || resolvePressureEffect(s, effect, ev) || resolveFamilyEffect(s, effect, ev) || resolveBondEffect(s, effect, ev) || resolveHunterEffect(s, effect, ev)) {
     s.pendingEvent = null;
     checkEnd(s);
     return;
@@ -380,9 +382,9 @@ export function resolveEvent(s: GameState, effect: string) {
         news(s, 5, 'Enlèvement en plein jour', `La femme d'un homme d'affaires de Little Sicily enlevée devant chez elle, puis relâchée contre rançon.`);
       } else log(s, 'neutral', 'La Packard noire a disparu. Fausse alerte… pour cette fois.');
       break;
-    case 'j_pay': s.clean -= 500; heat(-5); log(s, 'neutral', "Le journaliste a trouvé d'autres sujets."); break;
-    case 'j_scare': respect(3); heat(6); log(s, 'neutral', 'Le journaliste a compris le message.'); break;
-    case 'j_ignore': heat(10); log(s, 'police', "L'article fait la une. Le préfet est furieux (+10 heat)."); break;
+    case 'j_pay': s.clean -= 500; heat(-5); hunterProgress(s, 'journaliste', -10); log(s, 'neutral', `${hunter(s, 'journaliste').name} a trouvé d'autres sujets (−5 heat, −10 enquête).`); break;
+    case 'j_scare': respect(3); heat(6); hunterProgress(s, 'journaliste', 10); log(s, 'neutral', `${hunter(s, 'journaliste').name} a compris le message, mais n'oublie pas (+6 heat, +10 enquête).`); break;
+    case 'j_ignore': heat(10); hunterProgress(s, 'journaliste', 10); log(s, 'police', "L'article fait la une. Le préfet est furieux (+10 heat, +10 enquête)."); break;
     case 'c_buy':
       s.dirty -= 1200;
       if (chance(0.75)) {

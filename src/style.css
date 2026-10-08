@@ -600,3 +600,17 @@ select {
 .final-score small { color: var(--ivory-dim); font-size: 12px; }
 .score-detail { position: relative; z-index: 1; }
 .panel-body select { max-width: 100%; }
+
+/* ---------- v0.8 : vendettas, grands coups, liens, ceux qui te traquent ---------- */
+.job.vendetta { border-left: 3px solid var(--oxblood-bright); }
+.vendetta-card { border-left: 3px solid var(--oxblood-bright); padding-left: 10px; margin-bottom: 10px; }
+.job.heist { border-color: var(--brass); }
+.stages { display: flex; gap: 4px; list-style: none; padding: 0; margin: 8px 0; flex-wrap: wrap; }
+.stages li { flex: 1 1 0; min-width: 70px; text-align: center; font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); color: var(--ivory-dim); border-radius: var(--r-sm); }
+.stages li.done { border-color: var(--brass-dim); color: var(--brass); }
+.stages li.now { border-color: var(--brass); background: rgba(196, 160, 82, 0.15); color: var(--ivory); font-weight: 700; }
+.trait.bond { border-color: var(--good); color: var(--clean); }
+.fedbar i { background: var(--oxblood-bright) !important; }
+.hunter.mort, .hunter.mute { opacity: 0.6; }
+.hunter details summary { cursor: pointer; font-size: 12px; margin-top: 4px; }
+.hunter small, .vendetta-card small { display: block; margin-top: 3px; }

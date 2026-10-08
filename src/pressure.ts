@@ -173,7 +173,7 @@ export function resolvePressureEffect(s: GameState, effect: string, ev: PendingE
         log(s, 'good', `Le Don et ses gardes repoussent les tueurs de ${r.name} (+6 respect, ${r.name} −2 force).`);
         news(s, 5, 'Le Don survit à une fusillade', `Les tueurs de ${r.boss} sont repartis les mains vides, et un peu moins nombreux.`);
       } else if (Math.random() < 0.3) {
-        killMember(s, don, `a été abattu par les tueurs de ${r.name}`);
+        killMember(s, don, `a été abattu par les tueurs de ${r.name}`, r.id);
       } else {
         don.status = 'blessé';
         don.statusWeeks = randInt(2, 4);

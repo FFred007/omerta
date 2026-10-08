@@ -101,6 +101,7 @@ export function travel(s: GameState, memberId: number, city: string): Result {
   if (memberCity(m) === city) return fail(`${m.nickname} est déjà à ${cityName(city)}.`);
   if (!isOpen(s, city)) return fail(`La famille n’a encore aucun pied à ${cityName(city)}.`);
   if (m.status === 'prison') return fail('On ne voyage pas depuis une cellule.');
+  if (s.heist && s.heist.stage > 0 && s.heist.team.includes(m.id)) return fail(`${m.nickname} est sur le grand coup.`);
   if (!payAny(s, TRAVEL_COST)) return fail(`Le voyage coûte ${fmt(TRAVEL_COST)}.`);
   const from = memberCity(m);
   release(s, m);

@@ -6,7 +6,7 @@ import { generateJobs, resolveJobs } from './jobs';
 import { onConquest, raidMood, shopsTick } from './shops';
 import {
   activeMembers, attackPower, chance, roll, winChance, clamp, committedToAttack, defenseOf, district, isAttackable, log,
-  award, fx, makeRecruit, membersIn, recruitCost, neighbors, newGame, news, nextId, owned, pick, projection, rand, randInt, rival, satisfaction,
+  award, fx, makeRecruit, membersIn, onHeist, recruitCost, neighbors, newGame, news, nextId, owned, pick, projection, rand, randInt, rival, satisfaction,
 } from './state';
 import { GOOD_ORDER, GOODS } from './data';
 import { donHas, familyCount, has } from './traits';
@@ -21,6 +21,10 @@ import { cityName, cityOf, cityDistricts, donCity, holder, isOpen, memberCity, r
 import { breachTruce, commissionTick, truceActive } from './commission';
 import { CITIES } from './data';
 import { finalize } from './score';
+import { bondsTick, onDeath, onPromote, shareOp } from './bonds';
+import { onKilled, vendettasTick } from './vendetta';
+import { hunterRaidMult, huntersTick } from './hunters';
+import { heistTick } from './heist';
 import type { BusinessKind, District, GameState, LogEntry, Member, RivalFamily } from './types';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -138,6 +142,7 @@ export function promote(s: GameState, memberId: number): ActionResult {
   m.salary = Math.round(m.salary * 1.8);
   m.loyalty = clamp(m.loyalty + 15, 0, 100);
   log(s, 'good', `${m.name} « ${m.nickname} » est fait capo.`);
+  onPromote(s, m);
   return ok;
 }
 
@@ -155,6 +160,7 @@ export function orderAttack(s: GameState, districtId: string, memberIds: number[
   if (!isAttackable(s, d)) return fail("Ce quartier n'est pas à ta portée.");
   if (!memberIds.length) return fail('Choisis au moins un homme.');
   if (s.members.some((m) => memberIds.includes(m.id) && (m.fatigue ?? 0) > 0)) return fail('Certains hommes récupèrent encore du dernier assaut ou du voyage.');
+  if (memberIds.some((id) => onHeist(s, id))) return fail('Certains hommes sont sur le grand coup.');
   if (s.members.some((m) => memberIds.includes(m.id) && memberCity(m) !== cityOf(d))) return fail(`Seuls tes hommes présents à ${cityName(cityOf(d))} peuvent attaquer ici.`);
   const r = d.owner !== 'neutral' ? rival(s, d.owner) : undefined;
   if (r && r.truceWeeks > 0) return fail(`Tu as une trêve avec ${r.name} (${r.truceWeeks} sem.).`);
@@ -239,8 +245,8 @@ export function heatForecast(s: GameState) {
   return { lines, sure: Math.round(sure * 10) / 10 };
 }
 
-export function startGame(familyName?: string) {
-  const s = newGame(familyName);
+export function startGame(familyName?: string, classic = false) {
+  const s = newGame(familyName, classic);
   generateJobs(s);
   fillObjectives(s);
   return s;
@@ -268,6 +274,7 @@ export function endTurn(s: GameState): LogEntry[] {
   const conquered = new Set<string>();
   resolvePlayerAttacks(s, conquered);
   resolveJobs(s);
+  heistTick(s);
   economy(s);
   resolveShipments(s);
   resolveRaids(s, raidedDistricts);
@@ -277,8 +284,11 @@ export function endTurn(s: GameState): LogEntry[] {
   commissionTick(s);
   shopsTick(s);
   crewTurn(s, raidedDistricts);
+  bondsTick(s);
+  vendettasTick(s);
   familyTick(s);
   networkTick(s);
+  huntersTick(s);
   dossierTick(s);
   heatWarnings(s);
   pressureTick(s);
@@ -361,7 +371,8 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
       conquered.add(d.id);
       fx(s, 'capture', d.id);
       log(s, 'good', `Victoire ! Tes hommes prennent ${target} ${dice}.${holders.length ? '' : " Personne n'y est resté en garde."}`);
-      casualties(s, men, 0.2 * ratio, 0.06 * ratio);
+      casualties(s, men, 0.2 * ratio, 0.06 * ratio, r?.id);
+      shareOp(s, men.map((m) => m.id));
       men.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 4, 'force'));
     } else {
       s.stats.battlesLost++;
@@ -372,19 +383,20 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
       }
       else d.garrison += 1;
       log(s, 'bad', `L'assaut sur ${target} tourne mal ${dice}. Tes hommes se replient.`);
-      casualties(s, men, 0.35 * ratio, 0.12 * ratio);
+      casualties(s, men, 0.35 * ratio, 0.12 * ratio, r?.id);
+      shareOp(s, men.map((m) => m.id));
       men.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 2, 'force'));
     }
   }
 }
 
-function casualties(s: GameState, men: Member[], pInjured: number, pKilled: number) {
+function casualties(s: GameState, men: Member[], pInjured: number, pKilled: number, byRival?: string) {
   for (const m of men) {
     if (!s.members.includes(m)) continue;
     // ses hommes protègent le Don : il risque moins que les autres
     const kill = m.isDon ? pKilled * 0.6 * (donHasTalent(s, 'b_increvable') ? 0.5 : 1) : pKilled;
     if (chance(kill)) {
-      killMember(s, m);
+      killMember(s, m, undefined, byRival);
     } else if (chance(pInjured)) {
       m.status = 'blessé';
       m.statusWeeks = randInt(2, 3);
@@ -398,9 +410,11 @@ function casualties(s: GameState, men: Member[], pInjured: number, pKilled: numb
 }
 
 /** Mort d'un membre : le Don déclenche la succession, un enfant brise le cœur de sa mère */
-export function killMember(s: GameState, m: Member, how = 'est tombé sous les balles') {
+export function killMember(s: GameState, m: Member, how = 'est tombé sous les balles', byRival?: string) {
+  const avengers = onDeath(s, m);
   if (m.isDon) {
     succession(s, m, `${how}`);
+    if (byRival && s.status === 'playing') onKilled(s, m, byRival, avengers);
     return;
   }
   s.members = s.members.filter((x) => x.id !== m.id);
@@ -414,6 +428,7 @@ export function killMember(s: GameState, m: Member, how = 'est tombé sous les b
     log(s, 'bad', `${m.name}, l'enfant du Don, est tombé. La famille ne s'en remettra jamais.`);
     news(s, 5, 'Deuil chez le Don', `${m.name} a été tué. On murmure que la vengeance sera terrible.`);
   } else log(s, 'bad', `${m.name} « ${m.nickname} » est tombé. La famille porte le deuil.`);
+  if (byRival) onKilled(s, m, byRival, avengers);
 }
 
 // ---------- Économie ----------
@@ -525,7 +540,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
   for (const d of owned(s)) {
     const illegal = d.businesses.filter((b) => BUSINESSES[b.kind].illegal);
     if (!illegal.length) continue;
-    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d)) * (donHasTalent(s, 'r_ombre') ? 0.8 : 1) * networkRaids(s);
+    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d)) * (donHasTalent(s, 'r_ombre') ? 0.8 : 1) * networkRaids(s) * hunterRaidMult(s);
     if (d.bribedCop) p *= 0.3;
     if (s.lowProfile) p *= 0.3;
     if (!chance(p)) continue;
@@ -632,7 +647,7 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
       donWin(s, r);
       fx(s, 'lost', d.id);
       news(s, 5, `${d.name} tombe aux mains de ${r.name}`, `Les hommes de ${r.boss} ont surpris la garde de la ${s.familyName}.`);
-      casualties(s, defenders, 0.45, 0.15);
+      casualties(s, defenders, 0.45, 0.15, r.id);
       defenders.forEach((m) => (m.assignment = null));
       defenders.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 1, 'force'));
     } else {
@@ -641,7 +656,8 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
       s.stats.battlesWon++;
       defenders.forEach((m) => (m.loyalty = clamp(m.loyalty + 3, 0, 100)));
       log(s, 'good', `${r.name} attaque ${d.name}, mais tes hommes repoussent l'assaut.`);
-      casualties(s, defenders, 0.15, 0.04);
+      casualties(s, defenders, 0.15, 0.04, r.id);
+      shareOp(s, defenders.map((m) => m.id));
       defenders.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 3, 'force'));
     }
     return;

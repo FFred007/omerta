@@ -109,6 +109,8 @@ export interface Job {
   team: number[];
   /** ville du coup (absent = New Corrano) */
   city?: string;
+  /** coup de vengeance contre un tueur nommé */
+  vendettaId?: number;
 }
 
 export interface Loan {
@@ -329,6 +331,15 @@ export interface GameState {
   ending?: Ending | null;
   /** villes entièrement tenues (annoncées une fois) */
   cityLords?: string[];
+  vendettas?: Vendetta[];
+  bonds?: Bond[];
+  /** opérations partagées par paire d'hommes (« 3-17 » → 2) */
+  bondPts?: Record<string, number>;
+  hunters?: Hunter[];
+  heist?: Heist | null;
+  heistCooldown?: number;
+  /** carte tirée au hasard (nouvelles parties depuis la v0.8) */
+  generatedMap?: boolean;
   /** jour de la semaine en cours (0 = lundi … 6 = dimanche) */
   day?: number;
   speed?: number;
@@ -400,4 +411,60 @@ export interface Ending {
   score: number;
   rank: string;
   best?: number;
+}
+
+export interface Vendetta {
+  id: number;
+  killer: string;
+  nickname: string;
+  rivalId: string;
+  city: string;
+  force: number;
+  victims: string[];
+  /** hommes liés aux victimes, qui attendent la vengeance */
+  avengers: number[];
+  week: number;
+  deadline: number;
+  seed: number;
+}
+
+export type BondKind = 'freres' | 'rivaux';
+export interface Bond { a: number; b: number; kind: BondKind; since: number }
+
+export type HunterId = 'journaliste' | 'inspecteur';
+export type HunterMood = 'enquete' | 'achete' | 'mute' | 'discredite' | 'mort';
+export interface Hunter {
+  id: HunterId;
+  name: string;
+  title: string;
+  seed: number;
+  progress: number; // 0..100 : à 100, il frappe
+  integrity: number; // 0..100 : résistance à l'argent et aux menaces
+  mood: HunterMood;
+  moodWeeks: number; // durée de l'état (acheté, muté…) ; à 0 il revient ou est remplacé
+  cooldown: number; // semaines avant la prochaine action du joueur contre lui
+  strikes: number; // nombre de fois où il a frappé
+  memory: { week: number; text: string }[];
+  generation: number; // 1 = le premier, 2 = son remplaçant…
+}
+
+export type HeistStage = 0 | 1 | 2 | 3; // 0 proposé, 1 repérages, 2 préparation, 3 jour J
+export interface Heist {
+  key: string;
+  title: string;
+  text: string;
+  city: string;
+  stat: JobStat;
+  difficulty: number;
+  minMen: number;
+  stage: HeistStage;
+  team: number[];
+  prep: number; // bonus de préparation ajouté à la compétence de l'équipe
+  leak: number; // 0..100 : risque que la police attende l'équipe
+  gear: string[]; // options de préparation achetées
+  spent: number;
+  expires: number; // semaine limite pour lancer le coup
+  reward: { dirty?: number; clean?: number; respect?: number; crates?: { good: Good; qty: number } };
+  rivalId?: string;
+  log: string[];
 }

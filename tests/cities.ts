@@ -18,7 +18,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
 
 // 1. ouvrir une ville
 {
-  const s = E.startGame();
+  const s = E.startGame(undefined, true);
   const capo = capoOf(s);
   const r1 = CT.openCity(s, 'halloran', [capo.id]);
   check(!r1.ok, `rang insuffisant refusé (${!r1.ok ? r1.error : ''})`);
@@ -44,7 +44,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
 
 // 2. le Don voyage : la ville qu'il quitte sans gouverneur rapporte 30 % de moins
 {
-  const s = E.startGame();
+  const s = E.startGame(undefined, true);
   s.respect = 40;
   s.dirty = 20000;
   const capo = capoOf(s);
@@ -69,7 +69,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
 
 // 3. sécession d'un gouverneur
 {
-  const s = E.startGame();
+  const s = E.startGame(undefined, true);
   s.respect = 40;
   s.dirty = 20000;
   const capo = capoOf(s);
@@ -82,7 +82,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
 
 // 4. la Commission : admission avec des voix achetées
 {
-  const s = E.startGame();
+  const s = E.startGame(undefined, true);
   s.respect = 70;
   s.dirty = 100000;
   const c = CM.commission(s);
@@ -94,7 +94,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
   // reliability des Dons hostiles : environ 60 %
   let seated = 0;
   for (let i = 0; i < 400; i++) {
-    const t = E.startGame();
+    const t = E.startGame(undefined, true);
     t.respect = 70;
     t.dirty = 100000;
     const cc = CM.commission(t);
@@ -106,7 +106,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
   }
   check(seated > 380, `admission obtenue ${seated}/400 avec toutes les voix achetées`);
   // la mise au ban crée la coalition
-  const t = E.startGame();
+  const t = E.startGame(undefined, true);
   for (const d of t.districts.filter((x) => (x.city ?? 'corrano') === 'corrano').slice(0, 5)) d.owner = 'player';
   const cc = CM.commission(t);
   cc.motion = { kind: 'ban_player', title: 'Ban', desc: '' };
@@ -115,7 +115,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
   CM.commissionTick(t);
   check((t.coalitionWeeks ?? 0) > 0, 'mise au ban : coalition déclenchée');
   // trêve violée
-  const u = E.startGame();
+  const u = E.startGame(undefined, true);
   CM.commission(u).truceWeeks = 3;
   const before = u.respect;
   CM.breachTruce(u);
@@ -124,20 +124,20 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
 
 // 5. fin choisie
 {
-  const s = E.startGame();
+  const s = E.startGame(undefined, true);
   check(!SC.retire(s).ok, 'retraite refusée trop tôt');
   s.week = 20;
   const base = SC.scoreBase(s);
   const r = SC.retire(s);
   check(r.ok && s.status === 'won' && s.ending?.score === base, `retraite : score ${s.ending?.score} = valeur ${base}`);
-  const t = E.startGame();
+  const t = E.startGame(undefined, true);
   t.week = 30;
   check(!SC.goLegit(t).ok && SC.legitBlockers(t).length >= 3, `légitimité refusée (${SC.legitBlockers(t).length} conditions manquantes)`);
   t.respect = 110; t.clean = 40000; t.dossier = 10; t.heat = 10; t.commission!.seat = true;
   const b2 = SC.scoreBase(t);
   check(SC.goLegit(t).ok && t.ending?.score === Math.round(b2 * 1.5), `légitimité ×1,5 : ${t.ending?.score}`);
   // plus de victoire automatique
-  const u = E.startGame();
+  const u = E.startGame(undefined, true);
   u.districts.filter((d) => (d.city ?? 'corrano') === 'corrano').forEach((d) => (d.owner = 'player'));
   u.rivals.filter((r) => r.city === 'corrano').forEach((r) => (r.alive = false));
   E.checkEnd(u);
@@ -146,7 +146,7 @@ const capoOf = (s: GameState) => s.members.find((m) => m.rank === 'capo' && !m.i
 
 // 6. migration d'une sauvegarde v0.6
 {
-  const s = E.startGame();
+  const s = E.startGame(undefined, true);
   const old = JSON.parse(JSON.stringify(s)) as GameState;
   old.districts = old.districts.filter((d) => !d.city);
   old.rivals = old.rivals.filter((r) => r.city === 'corrano').map((r) => ({ ...r, city: undefined, surname: undefined }));

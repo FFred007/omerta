@@ -25,6 +25,8 @@ npx vite-node tests/sim.ts 300 --dumb # bot naïf : ni coups, ni contrebande, ni
 npx vite-node tests/forecast.ts      # prévisions = ce que le moteur applique (0 écart attendu)
 npx vite-node tests/calib.ts         # % affiché = taux de réussite réel (assauts et coups)
 npx vite-node tests/cities.ts        # villes, gouverneurs, Commission, fin choisie, migration
+npx vite-node tests/v08.ts           # liens, vendettas, traqueurs, grands coups (chance affichée = réelle)
+npx vite-node tests/mapgen.ts        # 1 000 cartes générées : jouables et toutes différentes
 npx vite-node tests/sim.ts 300 --retire=50   # le bot prend sa retraite à la semaine 50
 ```
 
@@ -48,6 +50,11 @@ Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérive
 - **Villes.** New Corrano, Port Halloran (le port : contrebande −15 % et moins risquée), Mirage Springs (la ville du jeu : tripots ×1,5) et Washburn (la capitale : dossier −1 par quartier tenu). Chacune a ses familles, qui vivent et se battent même sans toi. On s'implante en achetant la gare avec une équipe menée par un capo, qui devient gouverneur. Le Don n'est que dans une ville à la fois : les coups viennent là où il est. Une ville sans le Don ni gouverneur rapporte 30 % de moins et ses hommes perdent en loyauté. Un gouverneur peu loyal peut faire sécession. Voyage : 150 $ par homme, une semaine sans assaut.
 - **Paliers de puissance.** Petite bande, Famille de quartier (le juge), Famille établie (2 villes, le conseiller), Grande famille (3 villes, candidature à la Commission), Parrain (4 villes, présidence, légitimité).
 - **Commission des Dons.** Toutes les 4 semaines, les 8 familles du pays votent une motion annoncée à l'avance : admission du joueur, présidence (Capo dei Capi), mise au ban du joueur (coalition de 8 semaines) ou d'un rival, trêve générale, ouverture des quais, dîme. Chaque Don a une position (pour, contre, indécis avec sa probabilité). Les voix s'achètent ou se promettent par pacte (6 semaines de paix), et un Don peut trahir sa parole. Violer une trêve de la Commission coûte la face.
+- **Liens entre les hommes.** Trois opérations ensemble font des frères d'armes (+1 par paire dans une même équipe). Une promotion ou une bagarre crée des rivaux (−2 par paire, −1 loyauté par semaine s'ils gardent le même quartier).
+- **Vendettas.** Un homme tué par une famille donne un nom de tueur. Pendant 10 semaines, un coup de vengeance est proposé dans sa ville (+2 par frère d'armes de la victime dans l'équipe). Vengé : +6 respect, +15 loyauté aux vengeurs. Impuni : −4 respect, −15 aux vengeurs, certains partent.
+- **Ceux qui te traquent.** Clara Whitfield (journaliste) et l'inspecteur Hollis Garrity (Prohibition) enquêtent chaque semaine selon la heat et tes affaires. À 100 : une enquête en une, ou une opération coup de poing. Déjeuner, acheter, menacer, discréditer, faire muter, faire disparaître : chaque action a sa chance exacte, ils s'en souviennent, et leurs remplaçants sont plus intègres.
+- **Grands coups.** Une offre de temps en temps, selon la ville du Don : repérages (test de discrétion), préparation (plans, spécialiste, faux papiers, flic payé), jour J. L'équipe est bloquée trois semaines, le risque de fuite monte, la chance affichée est exacte. Butin de 18 000 à 33 000 $.
+- **Carte générée.** Chaque nouvelle partie tire ses quartiers, leur place et les territoires des familles (carte classique au choix).
 - **Pression.** Un capo ambitieux peu loyal peut tenter un coup d'État ; les ennemis jurés tentent d'assassiner le Don.
 - **Contrats.** Trois objectifs à moyen terme en permanence, avec échéance et récompense.
 - **Hommes.** Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat la plus utilisée ; tous les deux niveaux, un trait (Tireur d'élite, Gueule cassée, Fantôme, Comptable, Chauffeur, Négociateur…). Rangs : Recrue, Soldat, Homme de confiance, Vétéran, Capo. Les 4 recrues sont renouvelées chaque semaine, avec leurs traits et parfois un défaut (Bavard, Cupide, Ivrogne, Trouillard). Les Dons rivaux ont aussi des traits, et en gagnent avec leurs victoires (Aguerri) ou leurs défaites contre toi (Revanchard).
@@ -79,6 +86,11 @@ src/
   cities.ts     villes, voyages, gouverneurs, implantation
   commission.ts Commission des Dons : motions, votes, pactes, trahisons
   score.ts      fin choisie et score final
+  bonds.ts      frères d'armes et rivalités
+  vendetta.ts   tueurs nommés et vengeance
+  hunters.ts    la journaliste et l'inspecteur
+  heist.ts      grands coups en trois semaines
+  mapgen.ts     carte générée
   pressure.ts   coalition, capos ambitieux, tentatives d'assassinat
   objectives.ts contrats à moyen terme
   fx.ts         effets visuels : camions, fusillades, compteurs, une du journal

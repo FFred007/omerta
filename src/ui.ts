@@ -5,6 +5,10 @@ import {
 import * as CT from './cities';
 import * as CM from './commission';
 import * as SC from './score';
+import * as BD from './bonds';
+import * as HU from './hunters';
+import * as HE from './heist';
+import { activeVendettas } from './vendetta';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
 import * as B from './booze';
@@ -108,6 +112,7 @@ function traitHint(m: Member, kind: 'assault' | 'force' | 'discretion') {
 }
 
 function busyLabel(m: Member) {
+  if (s.heist && s.heist.stage > 0 && s.heist.team.includes(m.id)) return 'sur le grand coup';
   if ((m.fatigue ?? 0) > 0) return 'récupère du dernier assaut';
   const j = onJob(s, m.id);
   if (j) return 'sur un coup';
@@ -470,7 +475,7 @@ function tabs() {
     ['quartier', 'Quartier', ''],
     ['don', s.regency ? 'Régence' : donOf(s)?.sex === 'f' ? 'La Donna' : 'Le Don', donOf(s)?.points ? `+${donOf(s)!.points}` : s.spouse?.pregnantWeeks ? '♥' : ''],
     ['business', 'Alcool', salesPlan(s).shortage ? '!' : ''],
-    ['coups', 'Coups', String(s.jobs.length)],
+    ['coups', 'Coups', `${s.jobs.length}${s.heist ? '+1' : ''}${activeVendettas(s).length ? ' !' : ''}`],
     ['famille', 'Famille', `${activeMembers(s).length}${injured ? `+${injured}` : ''}`],
     ['villes', 'Villes', CT.openCities(s).some((c) => !CT.holder(s, c.id)) ? '!' : String(CT.openCities(s).length)],
     ['commission', 'Commission', s.commission ? `${Math.max(0, s.commission.next - s.week)} sem.` : ''],
@@ -730,19 +735,21 @@ function rewardText(j: Job) {
 }
 
 function jobsPanel() {
-  if (!s.jobs.length) return `<h3>Les coups</h3><p class="empty">Aucune opportunité cette semaine. Reviens après la fin de semaine.</p>`;
-  const jobCity = s.jobs[0]?.city ?? 'corrano';
-  const avail = activeMembers(s).filter((m) => CT.memberCity(m) === jobCity);
+  const head = `${heistBlock()}${vendettaBlock()}`;
+  if (!s.jobs.length) return `${head}<h3>Les coups</h3><p class="empty">Aucune opportunité cette semaine. Reviens après la fin de semaine.</p>`;
+  const jobCity = s.jobs.find((j) => !j.vendettaId)?.city ?? s.jobs[0]?.city ?? 'corrano';
   return `
+    ${head}
     <h3>Les coups de la semaine · ${esc(CT.cityName(jobCity))}</h3>
-    <p class="flavor">Les opportunités viennent au Don, dans la ville où il se trouve. Seuls tes hommes présents à ${esc(CT.cityName(jobCity))} peuvent y participer. Choisis une équipe : la force ou la discrétion décide. Les hommes engagés ne gardent pas leur quartier cette semaine.</p>
+    <p class="flavor">Les opportunités viennent au Don, dans la ville où il se trouve ; une vendetta se règle dans la ville du tueur. Seuls tes hommes présents sur place peuvent participer. La force ou la discrétion décide ; des frères d'armes dans la même équipe se battent mieux (+1 par paire), des rivaux moins bien (−2). Les hommes engagés ne gardent pas leur quartier cette semaine.</p>
     ${s.jobs.map((j) => {
+      const avail = activeMembers(s).filter((m) => CT.memberCity(m) === (j.city ?? 'corrano') && !(s.heist && s.heist.stage > 0 && s.heist.team.includes(m.id)));
       const skill = teamSkill(s, j);
       const p = jobChance(s, j);
       const r = j.rivalId ? rival(s, j.rivalId) : undefined;
       const missing = Math.max(0, j.minMen - j.team.length);
       return `
-      <article class="job ${j.team.length ? 'staffed' : ''}">
+      <article class="job ${j.team.length ? 'staffed' : ''} ${j.vendettaId ? 'vendetta' : ''}">
         <div class="job-head"><b>${esc(j.title)}</b><span class="tag">${j.stat === 'force' ? 'Force' : 'Discrétion'} · difficulté ${j.difficulty}</span></div>
         <p>${esc(j.text)}</p>
         <div class="job-meta">
@@ -750,6 +757,7 @@ function jobsPanel() {
           <span>Si ça rate : <span class="danger">+${j.failHeat} heat</span>, ${j.danger >= 0.5 ? 'gros risque' : j.danger >= 0.35 ? 'risque' : 'petit risque'} de ${j.stat === 'discretion' ? 'prison' : 'blessures'}${r && j.relationHit ? ` · relation avec ${esc(r.name)} −${j.relationHit}` : ''}</span>
         </div>
         <div class="team">
+          ${avail.length ? '' : `<p class="empty">Aucun homme à ${esc(CT.cityName(j.city))}.</p>`}
           ${avail.map((m) => {
             const tired = (m.fatigue ?? 0) > 0;
             const inThis = j.team.includes(m.id);
@@ -766,6 +774,92 @@ function jobsPanel() {
         </div>
       </article>`;
     }).join('')}`;
+}
+
+
+function vendettaBlock() {
+  const list = activeVendettas(s);
+  if (!list.length) return '';
+  return `<h3>Vendettas</h3>${list.map((v) => {
+    const r = rival(s, v.rivalId);
+    const left = v.deadline - s.week;
+    const avengers = v.avengers.map((id) => s.members.find((m) => m.id === id)).filter((m): m is Member => !!m);
+    return `<div class="person vendetta-card">${portrait({ seed: v.seed, size: 52, age: 30 + (v.seed % 15), rank: 'rival', scars: 1 + (v.seed % 2) })}<div class="grow">
+      <b>${esc(v.killer)} « ${esc(v.nickname)} »</b> <span class="muted">· tueur de ${r ? `<span style="color:${r.color}">${esc(r.name)}</span>` : 'la pègre'} · ${esc(CT.cityName(v.city))} · force ${v.force}</span>
+      <small>A tué ${esc(v.victims.join(', '))}. <span class="${left <= 3 ? 'danger' : ''}">Encore ${left} semaine${left > 1 ? 's' : ''} pour le venger</span>, sinon −4 respect et ses vengeurs perdent 15 de loyauté (certains partent).${avengers.length ? ` Vengeurs (+2 chacun sur le coup) : ${esc(avengers.map((m) => m.nickname).join(', '))}.` : ''}</small>
+    </div></div>`;
+  }).join('')}`;
+}
+
+function heistBlock() {
+  const h = s.heist;
+  if (!h) return '';
+  const stages = ['Proposé', 'Repérages', 'Préparation', 'Jour J'];
+  const pool = activeMembers(s).filter((m) => CT.memberCity(m) === h.city);
+  const p = HE.strikeChance(s, h);
+  const team = h.team.map((id) => s.members.find((m) => m.id === id)).filter((m): m is Member => !!m);
+  return `<h3>Le grand coup</h3>
+  <article class="job staffed heist">
+    <div class="job-head"><b>${esc(h.title)}</b><span class="tag">${esc(CT.cityName(h.city))} · ${h.stat === 'force' ? 'Force' : 'Discrétion'} · difficulté ${h.difficulty}</span></div>
+    <p>${esc(h.text)}</p>
+    <ol class="stages">${stages.map((x, i) => `<li class="${i === h.stage ? 'now' : i < h.stage ? 'done' : ''}">${x}</li>`).join('')}</ol>
+    <div class="job-meta">
+      <span>Butin : ${[h.reward.dirty ? `<span class="dirty">+${money(h.reward.dirty)} sale</span>` : '', h.reward.clean ? `<span class="clean">+${money(h.reward.clean)} propre</span>` : '', h.reward.crates ? `+${h.reward.crates.qty} caisses de ${GOODS[h.reward.crates.good].plural}` : '', h.reward.respect ? `+${h.reward.respect} respect` : ''].filter(Boolean).join(' · ')}</span>
+      <span>Réussi : <span class="danger">+10 heat, +5 dossier</span>${h.rivalId ? ` · ${esc(rival(s, h.rivalId)?.name ?? '')} ne pardonnera pas` : ''} · Raté : +10 heat, blessés · Éventé : la police attend, arrestations</span>
+    </div>
+    ${h.stage === 0 ? `
+      <p class="note">Trois semaines : repérages (test de discrétion, +4 de préparation), préparation (achats), puis le jour J. L'équipe ne garde plus ses quartiers pendant tout ce temps. Offre valable encore ${h.expires - s.week} semaine(s), minimum ${h.minMen} hommes à ${esc(CT.cityName(h.city))}.</p>
+      <div class="team">${pool.map((m) => `<label class="check"><input type="checkbox" data-act="heist-pick" data-id="${m.id}" ${h.team.includes(m.id) ? 'checked' : ''} ${(m.fatigue ?? 0) > 0 ? 'disabled' : ''}>
+        <span>${m.isDon ? '<b class="donmark">Le Don</b> ' : ''}${esc(m.nickname)} <span class="muted">· ${h.stat === 'force' ? 'F' : 'D'}${h.stat === 'force' ? m.force : m.discretion} · D${m.discretion}${HAS_BAVARD(m) ? ' · <span class="danger">Bavard (+10 fuite)</span>' : ''} · ${busyLabel(m)}</span></span></label>`).join('')}</div>` : `<p class="note">Équipe : ${esc(team.map((m) => m.nickname).join(', '))}${h.log.length ? ` · ${esc(h.log.join(' · '))}` : ''}</p>`}
+    <div class="odds" style="--odds:${oddsTone(p)}">Équipe <b class="num">${HE.heistSkill(s, h)}</b> + préparation <b class="num">${h.prep}</b> contre <b class="num">${h.difficulty}</b> · risque de fuite <b class="num">${h.leak} %</b>${h.stage === 1 ? ` · repérages : ${pct(HE.reconChance(s, h))}` : ''} · <b style="color:${oddsTone(p)}">${pct(p)} au jour J</b></div>
+    ${h.stage >= 1 && h.stage <= 2 ? `<div class="build-grid">${Object.entries(HE.GEAR).map(([k, g]) => `<button class="build" data-act="gear" data-id="${k}" ${h.gear.includes(k) || (g.currency === 'clean' ? s.clean : s.dirty + s.clean) < g.cost ? 'disabled' : ''}>
+      <b>${esc(g.name)}${h.gear.includes(k) ? ' ✓' : ''}</b><span>${esc(g.desc)}</span><span class="num ${g.currency}">${money(g.cost)} ${g.currency === 'clean' ? 'propre' : ''}</span></button>`).join('')}</div>` : ''}
+    <div class="diplo">
+      ${h.stage === 0 ? `<button class="btn primary" data-act="heist-go" ${h.team.length >= h.minMen ? '' : 'disabled'}>Lancer les repérages</button>` : ''}
+      <button class="btn small danger" data-act="heist-abort">${ui.confirm === 'heist-abort' ? 'Confirmer l’annulation' : h.stage ? 'Annuler le coup' : 'Laisser passer'}</button>
+    </div>
+  </article>`;
+}
+const HAS_BAVARD = (m: Member) => (m.traits ?? []).includes('bavard');
+
+function bondChips(m: Member) {
+  const list = BD.bondsOf(s, m.id);
+  if (!list.length) return '';
+  return `<span class="traits">${list.map((b) => {
+    const o = s.members.find((x) => x.id === BD.other(b, m.id));
+    if (!o) return '';
+    return `<span class="trait ${b.kind === 'rivaux' ? 'bad' : 'bond'}" title="${b.kind === 'freres' ? '+1 quand ils sont dans la même équipe' : '−2 dans la même équipe, −1 loyauté par semaine s’ils gardent le même quartier'}">${b.kind === 'freres' ? 'Frère d’armes' : 'Rival'} de ${esc(o.nickname)}</span>`;
+  }).join('')}</span>`;
+}
+
+function huntersBlock() {
+  return `<h4>Ceux qui te traquent</h4>${HU.hunters(s).map((h) => {
+    const lines = HU.huntGain(s, h);
+    const net = HU.huntNet(s, h);
+    const moodTxt: Record<string, string> = { enquete: 'enquête', achete: `acheté(e), encore ${h.moodWeeks} sem.`, mute: `muté, remplaçant dans ${h.moodWeeks} sem.`, discredite: `discrédité(e), encore ${h.moodWeeks} sem.`, mort: `mort(e), remplaçant dans ${h.moodWeeks} sem.` };
+    const btn = (a: HU.HunterAction, label: string, hint: string) => {
+      const why = HU.actionBlocker(s, h, a);
+      if (why && (why.startsWith('Réservé'))) return '';
+      return `<button class="btn small ${a === 'kill' ? 'danger' : ''}" data-act="hunt" data-id="${h.id}" data-to="${a}" ${why ? 'disabled' : ''} title="${esc(why ?? hint)}">${label}</button>`;
+    };
+    const killKey = `hunt-kill-${h.id}`;
+    return `<div class="person hunter ${h.mood}">${portrait({ seed: h.seed, size: 56, age: 32 + (h.seed % 20), sex: h.id === 'journaliste' && h.generation < 3 ? 'f' : 'm', rank: 'soldat' })}<div class="grow">
+      <b>${esc(h.name)}</b> <span class="muted">· ${esc(h.title)} · intégrité ${h.integrity} · ${moodTxt[h.mood]}</span>
+      <div class="aff">Enquête ${Math.round(h.progress)}/100 ${h.mood === 'enquete' ? `<span class="${net > 0 ? 'danger' : 'clean'}">(${net > 0 ? '+' : ''}${net.toLocaleString('fr-FR')}/sem.)</span>` : ''}
+        <div class="mood-meter wide fedbar"><i style="width:${h.progress}%"></i></div></div>
+      ${lines.length ? `<small>${lines.map((l) => `${esc(l.label)} ${l.value > 0 ? '+' : ''}${l.value.toLocaleString('fr-FR')}`).join(' · ')}</small>` : ''}
+      <small>À 100 : ${h.id === 'journaliste' ? 'elle publie son enquête (+10 heat, +8 dossier, −3 respect)' : 'opération coup de poing sur tes deux quartiers les plus chargés (établissements fermés, arrestations, 15 % du sale saisi, +6 dossier)'}.</small>
+      <div class="diplo">
+        ${btn('lunch', `Déjeuner · ${money(HU.LUNCH_COST)} · ${pct(HU.talkChance(s, h))}`, '−20 enquête si le Don la convainc')}
+        ${btn('bribe', `Acheter · ${money(HU.bribeCost(h))} · ${pct(HU.bribeChance(s, h))}`, '8 semaines de calme ; sinon +15 enquête et +3 dossier')}
+        ${btn('threat', `Menacer · ${pct(HU.threatChance(h))}`, '−30 enquête ; sinon +20 et +5 heat')}
+        ${btn('discredit', `Discréditer · ${money(HU.DISCREDIT_COST)} · ${pct(HU.discreditChance(s))}`, 'Suspendu(e) 6 semaines, enquête à zéro ; sinon +8 heat')}
+        ${btn('transfer', `Faire muter · ${money(HU.TRANSFER_COST)} propre`, 'Remplacé après 6 semaines')}
+        ${h.mood === 'enquete' ? `<button class="btn small danger" data-act="hunt" data-id="${h.id}" data-to="kill" data-confirm="${killKey}" ${HU.actionBlocker(s, h, 'kill') ? 'disabled' : ''}>${ui.confirm === killKey ? 'Confirmer l’ordre' : `Faire disparaître · +${h.id === 'journaliste' ? 25 : 30} heat, +${h.id === 'journaliste' ? 15 : 20} dossier`}</button>` : ''}
+      </div>
+      ${h.memory.length ? `<details><summary class="muted">Ce qu’il ou elle retient de toi</summary><ul class="log">${h.memory.map((x) => `<li class="tone-neutral"><span class="w">S${x.week}</span>${esc(x.text)}</li>`).join('')}</ul></details>` : ''}
+    </div></div>`;
+  }).join('')}`;
 }
 
 // ---------- Portraits ----------
@@ -910,6 +1004,7 @@ function familyPanel() {
         <b>${esc(m.name)}</b> <span class="nick">« ${esc(m.nickname)} »</span><span class="rank">${m.isDon ? (m.sex === 'f' ? 'La Donna' : 'Le Don') : m.isChild ? `${m.sex === 'f' ? 'Fille' : 'Fils'} du Don · niv. ${lvl}` : `${rankTitle(m)} · niv. ${lvl}`}</span>
         <div class="xp" role="meter" aria-valuenow="${m.xp ?? 0}" aria-valuemin="0" aria-valuemax="${need}" aria-label="Expérience de ${esc(m.nickname)}" title="${lvl >= 8 ? 'Niveau maximum' : `${m.xp ?? 0}/${need} XP avant le niveau ${lvl + 1}`}"><i style="width:${lvl >= 8 ? 100 : ((m.xp ?? 0) / need) * 100}%"></i></div>
         ${traitChips(m.traits, true)}
+        ${bondChips(m)}
         <div class="attrs">
           <span>Force <b>${m.force}</b></span><span>Discrétion <b>${m.discretion}</b></span>
           <span class="${m.loyalty < 35 ? 'loy-low' : ''}">Loyauté <b>${m.loyalty}</b></span>
@@ -1123,6 +1218,7 @@ function corruptionPanel() {
   return `
     <h3>Le réseau</h3>
     <p class="flavor">Des gens, pas des boutons. Ils se paient en argent propre chaque semaine, deviennent gourmands, peuvent être démasqués (heat et dossier qui explosent) ou rachetés par un rival qui te déteste. Le Verbe du Don fait baisser leurs tarifs.</p>
+    ${huntersBlock()}
     <h4>Le dossier fédéral (${Math.round(s.dossier ?? 0)}/100)</h4>
     ${dossierBlock()}
     <h4>D'où vient ta heat (${s.heat}/100)</h4>
@@ -1257,6 +1353,9 @@ function modals() {
       <p>Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy, une cave de 45 caisses et quatre hommes. Les Castellano, les Irlandais de Kilbride et le clan Wolska se partagent le reste de la ville. Plus loin, Port Halloran, Mirage Springs et Washburn attendent leur heure.</p>
       ${SC.readBest() ? `<p class="muted">Ton record : ${SC.readBest()} points.</p>` : ''}
       <ul class="rules">${rulesList()}</ul>
+      ${s.week === 1 ? `<div class="launder" role="group" aria-label="Carte"><span>La carte</span><span class="seg">
+        <button class="btn small ${s.generatedMap ? 'on' : ''}" data-act="map" data-id="random" aria-pressed="${!!s.generatedMap}">${s.generatedMap ? 'Tirer une autre carte' : 'Carte au hasard'}</button>
+        <button class="btn small ${s.generatedMap ? '' : 'on'}" data-act="map" data-id="classic" aria-pressed="${!s.generatedMap}">Carte classique</button></span></div>` : ''}
       <label for="fam" class="muted" style="font-size:13px">Nom de ta famille</label>
       <input id="fam" type="text" value="${esc(s.familyName)}" maxlength="32">
       <div class="actions"><button class="btn primary" data-act="start">Prendre la relève</button></div>
@@ -1419,6 +1518,23 @@ app.addEventListener('click', (ev) => {
     case 'vote': return run(CM.setVote(s, (id || null) as 'pour' | 'contre' | null));
     case 'retire': if (confirmed('retire')) run(SC.retire(s)); return;
     case 'legit': if (confirmed('legit')) run(SC.goLegit(s)); return;
+    case 'map': {
+      const name = (document.getElementById('fam') as HTMLInputElement | null)?.value.trim() || s.familyName;
+      s = E.startGame(name.startsWith('Famille') ? name : `Famille ${name}`, id === 'classic');
+      const don = donOf(s);
+      if (don) don.name = `${don.name.split(' ')[0]} ${s.familyName.replace(/^Famille /, '')}`;
+      ui.selected = 'sicily'; ui.city = 'corrano'; ui.feed = [];
+      ui.shown = { dirty: s.dirty, clean: s.clean, respect: s.respect };
+      return render();
+    }
+    case 'hunt': {
+      const key = el.dataset.confirm;
+      if (key && !confirmed(key)) return;
+      return run(HU.act(s, id as 'journaliste' | 'inspecteur', el.dataset.to as HU.HunterAction));
+    }
+    case 'heist-go': return run(HE.launchHeist(s));
+    case 'gear': return run(HE.buyGear(s, id));
+    case 'heist-abort': if (confirmed('heist-abort')) run(HE.abortHeist(s)); return;
     case 'end': return resolveWeek();
     case 'play': ui.playing = !ui.playing; return updateClock();
     case 'speed': s.speed = Number(id); save(s); return render();
@@ -1477,6 +1593,8 @@ app.addEventListener('change', (ev) => {
     run(CT.travel(s, Number(el.dataset.id), el.value));
   } else if (act === 'governor') {
     run(CT.setGovernor(s, el.dataset.id!, el.value ? Number(el.value) : null));
+  } else if (act === 'heist-pick') {
+    run(HE.toggleHeistMember(s, Number(el.dataset.id)));
   } else if (act === 'exp-pick') {
     const mid = Number(el.dataset.id);
     if ((el as HTMLInputElement).checked) ui.expedition.add(mid);

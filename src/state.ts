@@ -10,6 +10,8 @@ import { spouseHas } from './family';
 import { networkHeat, networkRetainers } from './network';
 import { cityMult, cityOf } from './cities';
 import { initCommission } from './commission';
+import { teamBondBonus } from './bonds';
+import { generateMap } from './mapgen';
 
 export const SAVE_KEY = 'omerta-save-v2';
 /** tripots de Mirage Springs */
@@ -89,7 +91,7 @@ function makeMember(s: GameState, partial: Partial<Member>): Member {
   };
 }
 
-export function newGame(familyName = 'Famille Moretti'): GameState {
+export function newGame(familyName = 'Famille Moretti', classic = false): GameState {
   const s: GameState = {
     version: SAVE_VERSION,
     familyName,
@@ -124,7 +126,8 @@ export function newGame(familyName = 'Famille Moretti'): GameState {
     headlines: [],
     news: [],
   };
-  s.districts = seedDistricts(s, DISTRICT_SEEDS);
+  s.districts = seedDistricts(s, classic ? DISTRICT_SEEDS : generateMap());
+  s.generatedMap = !classic;
   s.cities = { corrano: { open: true, governorId: null } };
   s.commission = initCommission(s);
   s.members.push(
@@ -176,7 +179,8 @@ function seedDistricts(s: GameState, seeds: typeof DISTRICT_SEEDS): District[] {
 
 /** Anciennes sauvegardes : on ajoute le Don, la famille, les villes et la Commission sans casser la partie */
 export function migrate(s: GameState) {
-  const missing = DISTRICT_SEEDS.filter((d) => !s.districts.some((x) => x.id === d.id));
+  // une ville entièrement absente (sauvegarde ancienne) reçoit sa carte classique
+  const missing = DISTRICT_SEEDS.filter((d) => !s.districts.some((x) => (x.city ?? 'corrano') === (d.city ?? 'corrano')));
   if (missing.length) s.districts.push(...seedDistricts(s, missing));
   for (const r of RIVAL_SEEDS) {
     if (!s.rivals.some((x) => x.id === r.id)) s.rivals.push({ ...r, traits: [...(r.traits ?? donStartTraits(r.id))], wins: 0, lossesToPlayer: 0 });
@@ -264,8 +268,10 @@ export function membersIn(s: GameState, districtId: string) {
 }
 
 export function committedToAttack(s: GameState, memberId: number) {
-  return s.orders.some((o) => o.memberIds.includes(memberId)) || s.jobs.some((j) => j.team.includes(memberId));
+  return s.orders.some((o) => o.memberIds.includes(memberId)) || s.jobs.some((j) => j.team.includes(memberId)) || onHeist(s, memberId);
 }
+/** engagé sur le grand coup en cours (repérages, préparation ou jour J) */
+export const onHeist = (s: GameState, memberId: number) => !!s.heist && s.heist.stage > 0 && s.heist.team.includes(memberId);
 export const onJob = (s: GameState, memberId: number) => s.jobs.find((j) => j.team.includes(memberId));
 export const onAttack = (s: GameState, memberId: number) => s.orders.find((o) => o.memberIds.includes(memberId));
 
@@ -286,7 +292,7 @@ export function defenseOf(s: GameState, d: District): number {
 export function attackPower(s: GameState, memberIds: number[]): number {
   const men = s.members.filter((m) => memberIds.includes(m.id));
   const base = men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'tireur') ? 3 : 0) + (has(m, 'tetebrulee') ? 3 : 0) - (has(m, 'trouillard') ? 2 : 0), 0);
-  return Math.max(0, Math.round(base + donPresence(s, men) + s.respect / 20));
+  return Math.max(0, Math.round(base + donPresence(s, men) + s.respect / 20 + teamBondBonus(s, memberIds)));
 }
 
 /** Le patron est là : ses hommes se battent mieux. Main de fer : sa Poigne compte double. */

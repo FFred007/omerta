@@ -1,13 +1,15 @@
 // Coups et missions : 3 à 4 opportunités par semaine, une équipe, une chance de réussite exacte
 import { BUSINESSES, GOODS } from './data';
 import {
-  activeMembers, award, chance, clamp, fx, log, news, nextId, owned, pick, randInt, roll, storageCap, stockTotal, winChance,
+  activeMembers, award, chance, clamp, fx, log, news, nextId, onHeist, owned, pick, randInt, roll, storageCap, stockTotal, winChance,
 } from './state';
 import type { GameState, Job, JobStat, Member, RivalFamily } from './types';
 import { donHas, has } from './traits';
 import { DON_SEEN_HEAT, donHasTalent } from './don';
 import { DOSSIER_ARREST, DOSSIER_SEEN, addDossier } from './dossier';
 import { cityName, donCity, memberCity, ownedIn, rivalCity } from './cities';
+import { shareOp, teamBondBonus } from './bonds';
+import { activeVendettas, avenge, avengerBonus, vendettaJob } from './vendetta';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -19,7 +21,7 @@ export function teamSkill(s: GameState, job: Job, ids = job.team) {
   return s.members
     .filter((m) => ids.includes(m.id))
     .reduce((t, m) => t + (job.stat === 'force' ? m.force : m.discretion) + (m.rank === 'capo' ? 2 : 0) + traitBonus(m, job.stat), 0)
-    + donMorale(s, ids);
+    + donMorale(s, ids) + teamBondBonus(s, ids) + avengerBonus(s, job, ids);
 }
 
 /** Le Don sur le coup : +1 par homme à ses côtés */
@@ -176,6 +178,8 @@ export function generateJobs(s: GameState) {
     const r = t.needsRival ? pick(rivals) : undefined;
     jobs.push({ id: nextId(s), key: t.key, team: [], city, ...t.make(s, scale, r) });
   }
+  // les vendettas en cours : un coup de vengeance par tueur, dans sa ville
+  for (const v of activeVendettas(s).slice(0, 2)) jobs.push(vendettaJob(s, v));
   s.jobs = jobs;
 }
 
@@ -183,7 +187,7 @@ export function generateJobs(s: GameState) {
 export function setJobTeam(s: GameState, jobId: number, ids: number[]): Result {
   const job = s.jobs.find((j) => j.id === jobId);
   if (!job) return fail('Ce coup n’est plus disponible.');
-  const team = activeMembers(s).filter((m) => ids.includes(m.id) && !(m.fatigue ?? 0) && memberCity(m) === (job.city ?? 'corrano')).map((m) => m.id);
+  const team = activeMembers(s).filter((m) => ids.includes(m.id) && !(m.fatigue ?? 0) && memberCity(m) === (job.city ?? 'corrano') && !onHeist(s, m.id)).map((m) => m.id);
   s.jobs.forEach((j) => { if (j.id !== jobId) j.team = j.team.filter((id) => !team.includes(id)); });
   s.orders.forEach((o) => (o.memberIds = o.memberIds.filter((id) => !team.includes(id))));
   s.orders = s.orders.filter((o) => o.memberIds.length);
@@ -197,6 +201,7 @@ export function toggleJobMember(s: GameState, jobId: number, memberId: number): 
   const m = s.members.find((x) => x.id === memberId);
   if (!m || m.status !== 'actif') return fail("Cet homme n'est pas disponible.");
   if ((m.fatigue ?? 0) > 0) return fail(`${m.nickname} récupère du dernier assaut ou du voyage.`);
+  if (onHeist(s, m.id)) return fail(`${m.nickname} est sur le grand coup.`);
   if (memberCity(m) !== (job.city ?? 'corrano')) return fail(`${m.nickname} est à ${cityName(memberCity(m))} : ce coup se joue à ${cityName(job.city)}.`);
   const team = job.team.includes(memberId) ? job.team.filter((x) => x !== memberId) : [...job.team, memberId];
   return setJobTeam(s, jobId, team);
@@ -247,6 +252,7 @@ export function resolveJobs(s: GameState) {
       men.forEach((m) => (m.loyalty = clamp(m.loyalty + 3, 0, 100)));
       men.forEach((m) => award(s, m, 3 + (job.difficulty >= 15 ? 1 : 0), job.stat));
       log(s, 'good', `Coup réussi : ${job.title} ${dice}. ${gains.join(', ')}.`);
+      if (job.vendettaId) avenge(s, job.vendettaId);
       if (job.key === 'banque') {
         news(s, 5, 'Braquage spectaculaire en plein jour', 'La Corrano Savings Bank délestée de sa paie. Aucun suspect, aucun témoin.');
         addDossier(s, 5, 'Braquage d’une banque : crime fédéral');
@@ -258,9 +264,11 @@ export function resolveJobs(s: GameState) {
       log(s, 'bad', `Coup raté : ${job.title} ${dice}. +${jobFailHeat(s, job)} heat.`);
       consequences(s, men, job.danger, job.stat);
       men.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 1, job.stat));
+      if (job.vendettaId) log(s, 'bad', 'Le tueur s’en est sorti. Il sera plus méfiant la prochaine fois.');
       if (job.key === 'banque') news(s, 4, 'Braquage manqué à la Savings Bank', 'Échange de coups de feu devant la banque. Les malfrats s’enfuient les mains vides.');
     }
   }
+  for (const job of s.jobs) if (job.team.length >= job.minMen) shareOp(s, job.team);
   s.jobs = [];
 }
 
