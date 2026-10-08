@@ -1,5 +1,6 @@
-export type FamilyId = 'player' | 'castellano' | 'kilbride' | 'wolska';
-export type Owner = FamilyId | 'neutral';
+/** 'player' ou l'identifiant d'une famille rivale (castellano, kilbride, wolska, benedetto…) */
+export type FamilyId = string;
+export type Owner = string;
 
 import type { DonTraitId, TraitId } from './traits';
 import type { TalentId } from './don';
@@ -54,6 +55,10 @@ export interface District {
   tariff: Tariff;
   /** richesse de la clientèle : multiplie le prix de vente au verre */
   wealth: number;
+  /** ville du quartier (absent = New Corrano) */
+  city?: string;
+  /** gare d'arrivée : réservée au joueur tant que la ville n'est pas ouverte */
+  gate?: boolean;
 }
 
 export type Tariff = 'bas' | 'normal' | 'eleve';
@@ -102,6 +107,8 @@ export interface Job {
   rivalId?: string;
   relationHit?: number;
   team: number[];
+  /** ville du coup (absent = New Corrano) */
+  city?: string;
 }
 
 export interface Loan {
@@ -151,6 +158,8 @@ export interface Member {
   sex?: 'm' | 'f';
   scars?: number;
   seed?: number;
+  /** ville où se trouve l'homme (absent = New Corrano) */
+  city?: string;
 }
 
 export interface Spouse {
@@ -218,7 +227,7 @@ export interface Recruit {
 }
 
 export interface RivalFamily {
-  id: Exclude<FamilyId, 'player'>;
+  id: string;
   name: string;
   boss: string;
   color: string;
@@ -234,6 +243,11 @@ export interface RivalFamily {
   traits?: DonTraitId[];
   wins?: number;
   lossesToPlayer?: number;
+  city?: string;
+  /** nom de famille (pour les mariages) */
+  surname?: string;
+  /** mise au ban par la Commission : les autres familles la chassent */
+  bannedWeeks?: number;
 }
 
 export interface AttackOrder {
@@ -308,6 +322,13 @@ export interface GameState {
   agentWarned?: boolean;
   coalitionWeeks?: number;
   objectives?: Objective[];
+  /** villes ouvertes et leurs gouverneurs */
+  cities?: Record<string, CityState>;
+  commission?: Commission;
+  /** fin de partie : score détaillé */
+  ending?: Ending | null;
+  /** villes entièrement tenues (annoncées une fois) */
+  cityLords?: string[];
   /** jour de la semaine en cours (0 = lundi … 6 = dimanche) */
   day?: number;
   speed?: number;
@@ -338,4 +359,45 @@ export interface Objective {
   deadline: number;
   createdWeek: number;
   reward: { dirty?: number; clean?: number; respect?: number; favors?: number };
+}
+
+export interface CityState {
+  open: boolean;
+  governorId?: number | null;
+  openedWeek?: number;
+}
+
+export type MotionKind = 'admission' | 'presidence' | 'ban_player' | 'ban_rival' | 'treve' | 'quais' | 'dime';
+export type Vote = 'pour' | 'contre';
+export interface Motion {
+  kind: MotionKind;
+  target?: string; // famille visée
+  title: string;
+  desc: string;
+}
+export interface Commission {
+  seat: boolean;
+  chair: boolean;
+  next: number; // semaine de la prochaine réunion
+  motion: Motion | null;
+  /** voix achetées ou promises par pacte : rivalId → vote promis */
+  bought: Record<string, Vote>;
+  pacts: string[]; // familles liées par un pacte pour ce vote
+  vote: Vote | null; // vote du joueur
+  truceWeeks: number; // trêve générale
+  portWeeks: number; // quais ouverts
+  breach?: boolean; // le joueur a bafoué une trêve de la Commission
+  history: { week: number; title: string; passed: boolean; pour: number; contre: number; betrayed?: string[] }[];
+}
+
+export type EndingKind = 'retraite' | 'legitimite' | 'mort' | 'prison' | 'ruine';
+export interface Ending {
+  kind: EndingKind;
+  title: string;
+  lines: { label: string; value: number }[];
+  base: number;
+  mult: number;
+  score: number;
+  rank: string;
+  best?: number;
 }

@@ -3,11 +3,22 @@ import * as B from '../src/booze';
 import * as E from '../src/engine';
 import { resolveEvent } from '../src/events';
 import { salesPlan } from '../src/state';
+import { openCity, travel } from '../src/cities';
+let multi = 0;
 let checked = 0, bad = 0;
 for (let g = 0; g < 300; g++) {
   const s = E.startGame();
   s.launderRate = [1, 0.5, 0][g % 3];
   E.build(s, 'sicily', 'tripot');
+  if (g % 3 === 2) {
+    // plusieurs villes : le Don part, New Corrano reste sans gouverneur (revenus ×0,7), tripot à Mirage
+    s.respect = 60; s.dirty += 20000;
+    const capo = s.members.find((m) => m.rank === 'capo' && !m.isDon)!;
+    openCity(s, 'mirage', [capo.id]);
+    E.build(s, 'm_gare', 'tripot');
+    travel(s, s.members.find((m) => m.isDon)!.id, g % 2 ? 'mirage' : 'corrano');
+    if (s.districts.some((d) => d.id === 'm_gare' && d.owner === 'player')) multi++;
+  }
   while (s.status === 'playing' && s.week < 40) {
     if (s.pendingEvent) { resolveEvent(s, s.pendingEvent.choices.find((c) => !c.disabled)!.effect); continue; }
     if (s.clean > 2500 && s.districts[5].businesses.length < 3) E.build(s, 'sicily', 'blanchisserie');
@@ -23,4 +34,4 @@ for (let g = 0; g < 300; g++) {
     if (s.dirty - d0 !== f.dirtyNet || s.clean - c0 !== f.cleanNet || !stockOk) { bad++; if (bad < 4) console.log('écart', s.week, s.dirty - d0, f.dirtyNet, s.clean - c0, f.cleanNet, JSON.stringify(s.stock), JSON.stringify(plan.stockAfter)); }
   }
 }
-console.log(`tours vérifiés : ${checked}, écarts : ${bad}`);
+console.log(`tours vérifiés : ${checked} (${multi} parties sur plusieurs villes), écarts : ${bad}`);

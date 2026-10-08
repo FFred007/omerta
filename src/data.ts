@@ -82,11 +82,23 @@ export const SHOP_NAMES = [
   'Lindqvist', 'Novak', 'Delgado', 'Fitzgerald', 'Rossi', 'Weinberg', 'Kaminski', 'Lombardo', 'Brennan', 'Hartmann',
 ];
 
-export const RANKS: [number, string][] = [
-  [0, 'Petite bande'], [15, 'Famille de quartier'], [35, 'Famille établie'], [60, 'Grande famille'], [100, 'Capo dei Capi'],
+/** Paliers de puissance : le respect ouvre des villes, la Commission, la légitimité */
+export interface Tier { min: number; name: string; cities: number; perk: string }
+export const TIERS: Tier[] = [
+  { min: 0, name: 'Petite bande', cities: 1, perk: 'Une seule ville' },
+  { min: 15, name: 'Famille de quartier', cities: 1, perk: 'Le juge accepte de te recevoir' },
+  { min: 35, name: 'Famille établie', cities: 2, perk: 'Une deuxième ville · le conseiller municipal te reçoit' },
+  { min: 60, name: 'Grande famille', cities: 3, perk: 'Candidature à la Commission des Dons · une troisième ville' },
+  { min: 100, name: 'Parrain', cities: 4, perk: 'Présidence de la Commission · toutes les villes · la légitimité' },
 ];
+export const RANKS: [number, string][] = TIERS.map((t) => [t.min, t.name]);
+export function tierOf(respect: number) {
+  let i = 0;
+  TIERS.forEach((t, k) => { if (respect >= t.min) i = k; });
+  return i;
+}
 export function rankOf(respect: number) {
-  return [...RANKS].reverse().find(([min]) => respect >= min)![1];
+  return TIERS[tierOf(respect)].name;
 }
 
 export const LAUNDER_FEE = 0.15;
@@ -97,6 +109,31 @@ export const PROMOTE_COST = 1000;
 export const DIRTY_STASH_LIMIT = 10000;
 
 type DistrictSeed = Omit<District, 'businesses' | 'bribedCop' | 'shops' | 'tariff'> & { businesses: BusinessKind[] };
+
+// ---------- Villes ----------
+export interface CityDef {
+  id: string;
+  name: string;
+  kind: string; // « la ville du jeu »
+  desc: string;
+  perk: string;
+  cols: number;
+  openCost: number;
+  gate?: string; // quartier d'arrivée
+}
+export const HOME_CITY = 'corrano';
+export const CITIES: CityDef[] = [
+  { id: 'corrano', name: 'New Corrano', kind: 'la ville natale', cols: 3, openCost: 0,
+    desc: 'Aciéries, lac et speakeasies. Là où tout a commencé.', perk: 'Little Sicily : +6 de défense' },
+  { id: 'halloran', name: 'Port Halloran', kind: 'le port', cols: 3, openCost: 6000, gate: 'h_phare',
+    desc: 'Le rhum des Caraïbes et le whisky d’Écosse débarquent ici, sous la brume.', perk: 'Contrebande −15 % et livraisons moins risquées tant que tu y tiens un quartier' },
+  { id: 'mirage', name: 'Mirage Springs', kind: 'la ville du jeu', cols: 3, openCost: 8000, gate: 'm_gare',
+    desc: 'Une oasis de néons dans le désert. Le jeu y est presque légal.', perk: 'Tripots : revenus ×1,5 dans cette ville' },
+  { id: 'washburn', name: 'Washburn', kind: 'la capitale', cols: 2, openCost: 10000, gate: 'w_gare',
+    desc: 'Sénateurs, lobbyistes et agents fédéraux. Ici, on achète des lois.', perk: 'Chaque quartier tenu : dossier fédéral −1 par semaine' },
+];
+export const cityDef = (id: string | undefined) => CITIES.find((c) => c.id === (id ?? HOME_CITY)) ?? CITIES[0];
+
 
 export const DISTRICT_SEEDS: DistrictSeed[] = [
   { id: 'lac', wealth: 1.35, name: 'Bord du Lac', row: 0, col: 0, owner: 'castellano', racket: 900, police: 2, slots: 3, garrison: 0, businesses: ['tripot'],
@@ -117,15 +154,63 @@ export const DISTRICT_SEEDS: DistrictSeed[] = [
     flavor: "Clubs de jazz et petites frappes indépendantes. Mûr pour être organisé." },
   { id: 'docks', wealth: 0.9, name: 'Les Docks', row: 2, col: 2, owner: 'kilbride', racket: 700, police: 2, slots: 3, garrison: 0, businesses: ['speakeasy'],
     flavor: "Le whisky canadien arrive par ici. Les Irlandais de Kilbride tiennent les quais." },
+  // ----- Port Halloran (3 × 2) -----
+  { id: 'h_quais', city: 'halloran', wealth: 0.95, name: 'Les Quais', row: 0, col: 0, owner: 'benedetto', racket: 800, police: 2, slots: 3, garrison: 0, businesses: ['speakeasy', 'entrepot'],
+    flavor: 'Les cargos de La Havane déchargent la nuit. Les Benedetto comptent chaque caisse.' },
+  { id: 'h_conserveries', city: 'halloran', wealth: 0.8, name: 'Les Conserveries', row: 0, col: 1, owner: 'benedetto', racket: 550, police: 1, slots: 3, garrison: 0, businesses: ['distillerie'],
+    flavor: 'Odeur de sardine et d’alcool de contrebande. Les ouvrières ne posent pas de questions.' },
+  { id: 'h_phare', city: 'halloran', gate: true, wealth: 0.9, name: 'Le Phare', row: 0, col: 2, owner: 'neutral', racket: 500, police: 1, slots: 3, garrison: 9, businesses: [],
+    flavor: 'Un vieux gardien, une crique discrète : la porte d’entrée idéale pour une famille étrangère.' },
+  { id: 'h_marche', city: 'halloran', wealth: 1.0, name: 'Le Marché aux poissons', row: 1, col: 0, owner: 'neutral', racket: 600, police: 2, slots: 3, garrison: 12, businesses: [],
+    flavor: 'Les mareyeurs ont leur propre milice. Pour l’instant.' },
+  { id: 'h_colline', city: 'halloran', wealth: 1.3, name: 'La Colline', row: 1, col: 1, owner: 'vasquez', racket: 850, police: 2, slots: 3, garrison: 0, businesses: ['tripot'],
+    flavor: 'Les villas des armateurs. Les Vasquez y vendent le rhum le plus cher de la côte.' },
+  { id: 'h_chantiers', city: 'halloran', wealth: 0.85, name: 'Les Chantiers navals', row: 1, col: 2, owner: 'vasquez', racket: 500, police: 1, slots: 3, garrison: 0, businesses: ['paris'],
+    flavor: 'Des coques à moitié finies et des paris sur tout ce qui bouge.' },
+  // ----- Mirage Springs (3 × 2) -----
+  { id: 'm_strip', city: 'mirage', wealth: 1.5, name: 'Le Strip', row: 0, col: 0, owner: 'lazzaro', racket: 1100, police: 2, slots: 4, garrison: 0, businesses: ['tripot', 'restaurant'],
+    flavor: 'Néons, roulettes et stars de cinéma. Les Lazzaro règnent sur le tapis vert.' },
+  { id: 'm_oasis', city: 'mirage', wealth: 1.3, name: 'Oasis Club', row: 0, col: 1, owner: 'lazzaro', racket: 800, police: 1, slots: 3, garrison: 0, businesses: ['tripot'],
+    flavor: 'Une piscine, un orchestre, et des tables où l’on perd sa fortune en souriant.' },
+  { id: 'm_gare', city: 'mirage', gate: true, wealth: 1.0, name: 'Gare du Désert', row: 0, col: 2, owner: 'neutral', racket: 450, police: 1, slots: 3, garrison: 8, businesses: [],
+    flavor: 'Le train de nuit dépose chaque soir des joueurs pleins d’espoir. Personne n’y tient encore la rue.' },
+  { id: 'm_ranch', city: 'mirage', wealth: 0.9, name: 'Le Ranch', row: 1, col: 0, owner: 'neutral', racket: 400, police: 1, slots: 3, garrison: 11, businesses: [],
+    flavor: 'Rodéos, combats de chiens et un shérif qui regarde ailleurs.' },
+  { id: 'm_vieille', city: 'mirage', wealth: 1.0, name: 'La Vieille Ville', row: 1, col: 1, owner: 'sandoval', racket: 600, police: 1, slots: 3, garrison: 0, businesses: ['speakeasy'],
+    flavor: 'Saloons poussiéreux et mezcal de contrebande. Le fief des Sandoval.' },
+  { id: 'm_mines', city: 'mirage', wealth: 0.8, name: 'Les Mines d’argent', row: 1, col: 2, owner: 'sandoval', racket: 450, police: 1, slots: 3, garrison: 0, businesses: ['distillerie'],
+    flavor: 'Les mineurs boivent dur. Les Sandoval leur vendent leur propre paie.' },
+  // ----- Washburn (2 × 2) -----
+  { id: 'w_gare', city: 'washburn', gate: true, wealth: 1.1, name: 'Union Station', row: 0, col: 0, owner: 'neutral', racket: 600, police: 2, slots: 3, garrison: 10, businesses: [],
+    flavor: 'Lobbyistes, valises et enveloppes. Tout ce qui compte passe par ici.' },
+  { id: 'w_capitole', city: 'washburn', wealth: 1.4, name: 'Le Capitole', row: 0, col: 1, owner: 'whitmore', racket: 1200, police: 3, slots: 3, garrison: 0, businesses: ['restaurant'],
+    flavor: 'Les sénateurs boivent sec dans les clubs privés du Cercle Whitmore.' },
+  { id: 'w_navy', city: 'washburn', wealth: 0.9, name: 'Navy Yard', row: 1, col: 0, owner: 'neutral', racket: 550, police: 2, slots: 3, garrison: 14, businesses: [],
+    flavor: 'Marins en permission et contrats d’armement. Les dockers ont leur syndicat.' },
+  { id: 'w_ambassades', city: 'washburn', wealth: 1.35, name: 'Les Ambassades', row: 1, col: 1, owner: 'whitmore', racket: 900, police: 2, slots: 3, garrison: 0, businesses: ['speakeasy'],
+    flavor: 'Immunité diplomatique et valises scellées : le champagne français y coule à flots.' },
 ];
 
 export const RIVAL_SEEDS: RivalFamily[] = [
   { id: 'castellano', name: 'Famille Castellano', boss: 'Don Aurelio Castellano', color: '#b33a3a',
-    strength: 20, money: 6000, aggression: 0.35, truceWeeks: 0, alive: true, relation: -5, alliance: false, war: false, talkCooldown: 0 },
+    strength: 20, money: 6000, aggression: 0.35, truceWeeks: 0, alive: true, relation: -5, alliance: false, war: false, talkCooldown: 0, city: 'corrano', surname: 'Castellano' },
   { id: 'kilbride', name: 'Irlandais de Kilbride', boss: 'Seamus « le Rouquin » Kilbride', color: '#3f8f5a',
-    strength: 13, money: 3000, aggression: 0.55, truceWeeks: 0, alive: true, relation: -25, alliance: false, war: false, talkCooldown: 0 },
+    strength: 13, money: 3000, aggression: 0.55, truceWeeks: 0, alive: true, relation: -25, alliance: false, war: false, talkCooldown: 0, city: 'corrano', surname: 'Kilbride' },
   { id: 'wolska', name: 'Clan Wolska', boss: 'Tadeusz Wolski', color: '#4a6fb3',
-    strength: 15, money: 3500, aggression: 0.4, truceWeeks: 0, alive: true, relation: 5, alliance: false, war: false, talkCooldown: 0 },
+    strength: 15, money: 3500, aggression: 0.4, truceWeeks: 0, alive: true, relation: 5, alliance: false, war: false, talkCooldown: 0, city: 'corrano', surname: 'Wolska' },
+  // Port Halloran
+  { id: 'benedetto', name: 'Famille Benedetto', boss: 'Don Carmelo Benedetto', color: '#a8673a',
+    strength: 17, money: 4500, aggression: 0.4, truceWeeks: 0, alive: true, relation: 0, alliance: false, war: false, talkCooldown: 0, city: 'halloran', surname: 'Benedetto', traits: ['riche'] },
+  { id: 'vasquez', name: 'Frères Vasquez', boss: 'Ramón Vasquez', color: '#8a4f9e',
+    strength: 13, money: 2500, aggression: 0.5, truceWeeks: 0, alive: true, relation: -5, alliance: false, war: false, talkCooldown: 0, city: 'halloran', surname: 'Vasquez', traits: ['sanguinaire'] },
+  // Mirage Springs
+  { id: 'lazzaro', name: 'Famille Lazzaro', boss: 'Don Enrico « le Croupier » Lazzaro', color: '#c08a2e',
+    strength: 18, money: 7000, aggression: 0.35, truceWeeks: 0, alive: true, relation: 5, alliance: false, war: false, talkCooldown: 0, city: 'mirage', surname: 'Lazzaro', traits: ['riche', 'diplomate'] },
+  { id: 'sandoval', name: 'Clan Sandoval', boss: 'Jack Sandoval', color: '#7a8a3a',
+    strength: 14, money: 2500, aggression: 0.5, truceWeeks: 0, alive: true, relation: -10, alliance: false, war: false, talkCooldown: 0, city: 'mirage', surname: 'Sandoval', traits: ['rancunier'] },
+  // Washburn
+  { id: 'whitmore', name: 'Le Cercle Whitmore', boss: 'Sénateur Ambrose Whitmore', color: '#5f7f96',
+    strength: 16, money: 9000, aggression: 0.25, truceWeeks: 0, alive: true, relation: 0, alliance: false, war: false, talkCooldown: 0, city: 'washburn', surname: 'Whitmore', traits: ['prudent', 'diplomate'] },
 ];
 
 export const FIRST_NAMES = [

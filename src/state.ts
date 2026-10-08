@@ -8,8 +8,12 @@ import type { JobStat } from './types';
 import { DON_MORALE, donHasTalent, donXpForNext, flairBonus, makeDon } from './don';
 import { spouseHas } from './family';
 import { networkHeat, networkRetainers } from './network';
+import { cityMult, cityOf } from './cities';
+import { initCommission } from './commission';
 
 export const SAVE_KEY = 'omerta-save-v2';
+/** tripots de Mirage Springs */
+export const MIRAGE_TRIPOT = 1.5;
 export const SAVE_VERSION = 2;
 
 // ---------- RNG ----------
@@ -97,7 +101,7 @@ export function newGame(familyName = 'Famille Moretti'): GameState {
     districts: [],
     members: [],
     recruits: [],
-    rivals: RIVAL_SEEDS.map((r) => ({ ...r, traits: donStartTraits(r.id), wins: 0, lossesToPlayer: 0 })),
+    rivals: RIVAL_SEEDS.map((r) => ({ ...r, traits: [...(r.traits ?? donStartTraits(r.id))], wins: 0, lossesToPlayer: 0 })),
     orders: [],
     judge: false,
     councilman: false,
@@ -120,15 +124,9 @@ export function newGame(familyName = 'Famille Moretti'): GameState {
     headlines: [],
     news: [],
   };
-  const usedNames = new Set<string>();
-  s.districts = DISTRICT_SEEDS.map((d) => ({
-    ...d,
-    bribedCop: false,
-    tariff: 'normal' as const,
-    shops: [],
-    businesses: d.businesses.map((kind) => ({ id: nextId(s), kind })),
-  }));
-  s.districts.forEach((d) => (d.shops = [makeShop(s, usedNames), makeShop(s, usedNames)]));
+  s.districts = seedDistricts(s, DISTRICT_SEEDS);
+  s.cities = { corrano: { open: true, governorId: null } };
+  s.commission = initCommission(s);
   s.members.push(
     makeMember(s, { name: 'Salvatore Greco', nickname: 'le Vieux', rank: 'capo', force: 6, discretion: 7, loyalty: 80, salary: 450, assignment: 'sicily', level: 4, traits: ['fidele', 'negociateur'] }),
     makeMember(s, { force: 6, discretion: 4, loyalty: 70, salary: 230, assignment: 'sicily', level: 1, traits: ['brute'] }),
@@ -165,8 +163,29 @@ export function load(): GameState | null {
   }
 }
 
-/** Anciennes sauvegardes : on ajoute le Don et la famille sans casser la partie */
+function seedDistricts(s: GameState, seeds: typeof DISTRICT_SEEDS): District[] {
+  const used = new Set(s.districts.flatMap((d) => d.shops.map((x) => x.owner)));
+  return seeds.map((d) => ({
+    ...d,
+    bribedCop: false,
+    tariff: 'normal' as const,
+    shops: [makeShop(s, used), makeShop(s, used)],
+    businesses: d.businesses.map((kind) => ({ id: nextId(s), kind })),
+  }));
+}
+
+/** Anciennes sauvegardes : on ajoute le Don, la famille, les villes et la Commission sans casser la partie */
 export function migrate(s: GameState) {
+  const missing = DISTRICT_SEEDS.filter((d) => !s.districts.some((x) => x.id === d.id));
+  if (missing.length) s.districts.push(...seedDistricts(s, missing));
+  for (const r of RIVAL_SEEDS) {
+    if (!s.rivals.some((x) => x.id === r.id)) s.rivals.push({ ...r, traits: [...(r.traits ?? donStartTraits(r.id))], wins: 0, lossesToPlayer: 0 });
+    const cur = s.rivals.find((x) => x.id === r.id)!;
+    cur.city ??= r.city;
+    cur.surname ??= r.surname;
+  }
+  s.cities ??= { corrano: { open: true, governorId: null } };
+  s.commission ??= initCommission(s);
   s.children ??= [];
   s.generation ??= 1;
   if (s.status === 'playing' && !s.members.some((m) => m.isDon) && !s.regency) {
@@ -230,7 +249,8 @@ export const owned = (s: GameState, owner: Owner = 'player') => s.districts.filt
 export const rival = (s: GameState, id: string) => s.rivals.find((r) => r.id === id);
 
 export function neighbors(s: GameState, d: District): District[] {
-  return s.districts.filter((o) => Math.abs(o.row - d.row) + Math.abs(o.col - d.col) === 1);
+  const city = cityOf(d);
+  return s.districts.filter((o) => cityOf(o) === city && Math.abs(o.row - d.row) + Math.abs(o.col - d.col) === 1);
 }
 
 export function isAttackable(s: GameState, d: District): boolean {
@@ -387,13 +407,13 @@ export function projection(s: GameState) {
   const plan = salesPlan(s);
   const flair = flairBonus(s);
   for (const d of owned(s)) {
-    const mult = capoBonus(s, d) * ((d.unrest ?? 0) > 0 ? 0.5 : 1);
+    const mult = capoBonus(s, d) * ((d.unrest ?? 0) > 0 ? 0.5 : 1) * cityMult(s, cityOf(d));
     const r = s.lowProfile ? 0 : racketOf(d);
     let f = 0;
     for (const b of d.businesses) {
       const def = BUSINESSES[b.kind];
       if (def.illegal) {
-        if (!s.lowProfile) f += def.income;
+        if (!s.lowProfile) f += def.income * (b.kind === 'tripot' && cityOf(d) === 'mirage' ? MIRAGE_TRIPOT : 1);
         heatGain += s.lowProfile ? 0 : def.heat * (d.bribedCop ? 0.5 : 1);
       } else {
         cleanIn += def.income;

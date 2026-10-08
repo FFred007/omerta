@@ -7,6 +7,7 @@ import type { GameState, Job, JobStat, Member, RivalFamily } from './types';
 import { donHas, has } from './traits';
 import { DON_SEEN_HEAT, donHasTalent } from './don';
 import { DOSSIER_ARREST, DOSSIER_SEEN, addDossier } from './dossier';
+import { cityName, donCity, memberCity, ownedIn, rivalCity } from './cities';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -160,7 +161,9 @@ const TEMPLATES: Template[] = [
 /** Tire 3 ou 4 coups pour la semaine */
 export function generateJobs(s: GameState) {
   const scale = 1 + Math.min(1.2, (s.week - 1) * 0.025) + owned(s).length * 0.03;
-  const rivals = s.rivals.filter((r) => r.alive);
+  // les opportunités viennent au Don, là où il se trouve
+  const city = ownedIn(s, donCity(s)).length ? donCity(s) : 'corrano';
+  const rivals = s.rivals.filter((r) => r.alive && rivalCity(r) === city);
   const pool = TEMPLATES.filter((t) => (!t.when || t.when(s)) && (!t.needsRival || rivals.length));
   const n = s.week < 3 ? 3 : randInt(3, 4);
   const jobs: Job[] = [];
@@ -171,7 +174,7 @@ export function generateJobs(s: GameState) {
     const t = pool.filter((x) => !used.has(x.key)).find((x) => (roll_ -= x.weight) <= 0)!;
     used.add(t.key);
     const r = t.needsRival ? pick(rivals) : undefined;
-    jobs.push({ id: nextId(s), key: t.key, team: [], ...t.make(s, scale, r) });
+    jobs.push({ id: nextId(s), key: t.key, team: [], city, ...t.make(s, scale, r) });
   }
   s.jobs = jobs;
 }
@@ -180,7 +183,7 @@ export function generateJobs(s: GameState) {
 export function setJobTeam(s: GameState, jobId: number, ids: number[]): Result {
   const job = s.jobs.find((j) => j.id === jobId);
   if (!job) return fail('Ce coup n’est plus disponible.');
-  const team = activeMembers(s).filter((m) => ids.includes(m.id) && !(m.fatigue ?? 0)).map((m) => m.id);
+  const team = activeMembers(s).filter((m) => ids.includes(m.id) && !(m.fatigue ?? 0) && memberCity(m) === (job.city ?? 'corrano')).map((m) => m.id);
   s.jobs.forEach((j) => { if (j.id !== jobId) j.team = j.team.filter((id) => !team.includes(id)); });
   s.orders.forEach((o) => (o.memberIds = o.memberIds.filter((id) => !team.includes(id))));
   s.orders = s.orders.filter((o) => o.memberIds.length);
@@ -193,7 +196,8 @@ export function toggleJobMember(s: GameState, jobId: number, memberId: number): 
   if (!job) return fail('Ce coup n’est plus disponible.');
   const m = s.members.find((x) => x.id === memberId);
   if (!m || m.status !== 'actif') return fail("Cet homme n'est pas disponible.");
-  if ((m.fatigue ?? 0) > 0) return fail(`${m.nickname} récupère du dernier assaut.`);
+  if ((m.fatigue ?? 0) > 0) return fail(`${m.nickname} récupère du dernier assaut ou du voyage.`);
+  if (memberCity(m) !== (job.city ?? 'corrano')) return fail(`${m.nickname} est à ${cityName(memberCity(m))} : ce coup se joue à ${cityName(job.city)}.`);
   const team = job.team.includes(memberId) ? job.team.filter((x) => x !== memberId) : [...job.team, memberId];
   return setJobTeam(s, jobId, team);
 }

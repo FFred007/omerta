@@ -3,6 +3,7 @@ import { ESCORTS, GOOD_ORDER, GOODS, PRICE_RESALE, PRICE_SMUGGLE, PRICE_WHOLESAL
 import { chance, clamp, fx, log, news, nextId, payAny, pendingCrates, pick, rand, stockTotal, storageCap } from './state';
 import type { Escort, GameState, Good } from './types';
 import { familyHas } from './traits';
+import { holdsPort } from './cities';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -13,18 +14,21 @@ export function prices(s: GameState, g: Good) {
   const m = s.market[g];
   const base = GOODS[g].base;
   return {
-    smuggle: Math.round(base * PRICE_SMUGGLE * m),
+    smuggle: Math.round(base * PRICE_SMUGGLE * m * smuggleDiscount(s)),
     wholesaler: Math.round(base * PRICE_WHOLESALER * m),
     resale: Math.round(base * PRICE_RESALE * m),
   };
 }
+
+/** Port Halloran tenu : −15 % ; quais ouverts par la Commission : −20 % */
+export const smuggleDiscount = (s: GameState) => (holdsPort(s) ? 0.85 : 1) * ((s.commission?.portWeeks ?? 0) > 0 ? 0.8 : 1);
 
 export const freeRoom = (s: GameState) => storageCap(s) - stockTotal(s) - pendingCrates(s);
 
 /** Risque d'interception d'une livraison de contrebande */
 export function shipmentRisk(s: GameState, escort: Escort) {
   const base = 0.1 + s.heat / 300;
-  return clamp(base * ESCORTS[escort].risk * (s.safeRouteWeeks > 0 ? 0.5 : 1) * (familyHas(s, 'chauffeur') ? 0.7 : 1), 0, 0.9);
+  return clamp(base * ESCORTS[escort].risk * (s.safeRouteWeeks > 0 ? 0.5 : 1) * (familyHas(s, 'chauffeur') ? 0.7 : 1) * (holdsPort(s) ? 0.8 : 1), 0, 0.9);
 }
 
 /** Part de la cargaison perdue si elle est interceptée */

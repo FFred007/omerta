@@ -17,6 +17,10 @@ import { activeContacts, contactState, networkRaids, networkTick } from './netwo
 import { DOSSIER_ARREST, DOSSIER_RAT, DOSSIER_SEEN, addDossier, dossierTick, trialEvent } from './dossier';
 import { inCoalition, pressureTick } from './pressure';
 import { fillObjectives, objectivesTick } from './objectives';
+import { cityName, cityOf, cityDistricts, donCity, holder, isOpen, memberCity, rivalCity } from './cities';
+import { breachTruce, commissionTick, truceActive } from './commission';
+import { CITIES } from './data';
+import { finalize } from './score';
 import type { BusinessKind, District, GameState, LogEntry, Member, RivalFamily } from './types';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -90,7 +94,7 @@ export function hire(s: GameState, recruitId: number): ActionResult {
   s.recruits = s.recruits.filter((x) => x.id !== recruitId);
   s.members.push({
     id: r.id, name: r.name, nickname: r.nickname, rank: 'soldat', force: r.force, discretion: r.discretion,
-    loyalty: r.loyalty, salary: r.salary, assignment: null, status: 'actif', statusWeeks: 0, weeksServed: 0,
+    loyalty: r.loyalty, salary: r.salary, assignment: null, status: 'actif', statusWeeks: 0, weeksServed: 0, city: donCity(s),
     xp: 0, level: r.level ?? 0, traits: [...(r.traits ?? [])], usage: { force: 0, discretion: 0 },
   });
   log(s, 'good', `${r.name} « ${r.nickname} » a prêté serment.`);
@@ -118,6 +122,7 @@ export function assign(s: GameState, memberId: number, districtId: string | null
   const m = s.members.find((x) => x.id === memberId);
   if (!m) return fail('Introuvable.');
   if (districtId && district(s, districtId).owner !== 'player') return fail("Tu ne peux poster tes hommes que chez toi.");
+  if (districtId && cityOf(district(s, districtId)) !== memberCity(m)) return fail(`${m.nickname} est à ${cityName(memberCity(m))}. Envoie-le d'abord à ${cityName(cityOf(district(s, districtId)))} (onglet Villes).`);
   m.assignment = districtId;
   return ok;
 }
@@ -149,7 +154,8 @@ export function orderAttack(s: GameState, districtId: string, memberIds: number[
   const d = district(s, districtId);
   if (!isAttackable(s, d)) return fail("Ce quartier n'est pas à ta portée.");
   if (!memberIds.length) return fail('Choisis au moins un homme.');
-  if (s.members.some((m) => memberIds.includes(m.id) && (m.fatigue ?? 0) > 0)) return fail('Certains hommes récupèrent encore du dernier assaut.');
+  if (s.members.some((m) => memberIds.includes(m.id) && (m.fatigue ?? 0) > 0)) return fail('Certains hommes récupèrent encore du dernier assaut ou du voyage.');
+  if (s.members.some((m) => memberIds.includes(m.id) && memberCity(m) !== cityOf(d))) return fail(`Seuls tes hommes présents à ${cityName(cityOf(d))} peuvent attaquer ici.`);
   const r = d.owner !== 'neutral' ? rival(s, d.owner) : undefined;
   if (r && r.truceWeeks > 0) return fail(`Tu as une trêve avec ${r.name} (${r.truceWeeks} sem.).`);
   if (r && r.alliance) return fail(`Tu es allié avec ${r.name}. Romps l'alliance d'abord (onglet Rivaux).`);
@@ -268,6 +274,7 @@ export function endTurn(s: GameState): LogEntry[] {
   marketTick(s);
   rivalsTurn(s, conquered);
   relationsTick(s);
+  commissionTick(s);
   shopsTick(s);
   crewTurn(s, raidedDistricts);
   familyTick(s);
@@ -321,6 +328,7 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
     const seen = donThere && !donHasTalent(s, 'r_invisible') ? DON_SEEN_HEAT : 0;
     s.heat = clamp(s.heat + 5 + d.police * 2 + men.filter((m) => has(m, 'tetebrulee')).length * 2 + seen, 0, 100);
     if (r) offendInLaws(s, r.id);
+    if (truceActive(s)) breachTruce(s);
     if (seen) addDossier(s, DOSSIER_SEEN, `Le Don vu à l'assaut sur ${d.name}`);
     men.forEach((m) => (m.fatigue = 2));
     fx(s, 'battle', d.id);
@@ -562,8 +570,8 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     if (!mine.length) {
       r.alive = false;
       s.respect = clamp(s.respect + 6, 0, 150);
-      log(s, 'good', `${r.name} n'a plus aucun territoire. ${r.boss} a fui la ville.`);
-      news(s, 5, `${r.boss} quitte New Corrano`, `Aperçu à la gare avec trois valises. La ${r.name} n'existe plus.`);
+      log(s, 'good', `${r.name} n'a plus aucun territoire. ${r.boss} a fui ${cityName(rivalCity(r))}.`);
+      news(s, 5, `${r.boss} quitte ${cityName(rivalCity(r))}`, `Aperçu à la gare avec trois valises. La ${r.name} n'existe plus.`);
       continue;
     }
     // revenus et recrutement
@@ -576,17 +584,20 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     if (r.truceWeeks > 0) r.truceWeeks--;
 
     // attaque : la relation avec le joueur décide s'il est une cible
-    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1) * (donHas(r, 'sanguinaire') ? 1.3 : 1) * (donHasTalent(s, 'b_terreur') ? 0.75 : 1) * (inCoalition(s) && !r.alliance ? 1.6 : 1);
-    if (s.week < 5 || !chance(aggression)) continue;
+    const bannedHere = s.rivals.some((x) => x.alive && x.id !== r.id && (x.bannedWeeks ?? 0) > 0 && rivalCity(x) === rivalCity(r));
+    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1) * (donHas(r, 'sanguinaire') ? 1.3 : 1) * (donHasTalent(s, 'b_terreur') ? 0.75 : 1) * (inCoalition(s) && !r.alliance ? 1.6 : 1) * (bannedHere ? 1.3 : 1);
+    if (s.week < 5 || truceActive(s) || !chance(aggression)) continue;
     const spareFriend = !r.war && r.relation > 30 && chance(0.8);
     const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter((d) => {
       if (d.owner === r.id || conquered.has(d.id)) return false;
+      if (d.gate && d.owner === 'neutral' && !isOpen(s, cityOf(d))) return false; // la gare attend la famille du joueur
       if (d.owner === 'player') return !r.alliance && r.truceWeeks === 0 && !spareFriend;
       return true;
     });
     if (!targets.length) continue;
     const hunt = r.war || donHas(r, 'revanchard') || (inCoalition(s) && !r.alliance);
-    const score = (d: District) => defenseOf(s, d) - d.racket / 400 - (hunt && d.owner === 'player' ? 8 : 0);
+    const banned = (d: District) => (rival(s, d.owner)?.bannedWeeks ?? 0) > 0;
+    const score = (d: District) => defenseOf(s, d) - d.racket / 400 - (hunt && d.owner === 'player' ? 8 : 0) - (banned(d) ? 10 : 0);
     targets.sort((a, b) => score(a) - score(b));
     const target = chance(0.7) ? targets[0] : pick(targets);
     rivalAttack(s, r, target);
@@ -678,6 +689,7 @@ function crewTurn(s: GameState, raided: Set<string>) {
     if (m.assignment && raided.has(m.assignment)) delta -= 5;
     if (s.heat > 70) delta -= 2;
     if (has(m, 'cupide')) delta -= 1;
+    if (!holder(s, memberCity(m))) delta -= 1; // loin du Don, sans gouverneur
     m.loyalty = clamp(m.loyalty + delta, has(m, 'fidele') ? 50 : 0, 100);
 
     if (m.loyalty < 25 && !has(m, 'fidele') && chance(0.3)) betray(s, m);
@@ -709,23 +721,26 @@ function heatWarnings(s: GameState) {
 }
 
 // ---------- Fin de partie ----------
+/** Plus de victoire automatique : c'est le joueur qui choisit quand s'arrêter (retraite ou légitimité) */
 export function checkEnd(s: GameState) {
   if (s.status !== 'playing') return;
   const n = owned(s).length;
   if (n === 0) {
-    s.status = 'lost';
-    s.endReason = 'Ta famille a été rayée de la carte. Plus un seul quartier ne te paie.';
+    finalize(s, 'ruine', 'Ta famille a été rayée de la carte. Plus un seul quartier ne te paie.');
   } else if (activeMembers(s).length === 0 && s.members.length === 0 && s.dirty + s.clean < 300) {
-    s.status = 'lost';
-    s.endReason = "Plus d'hommes, plus d'argent. Tu finis tes jours à servir des cafés à Little Sicily.";
-  } else if (n === s.districts.length) {
-    s.status = 'won';
-    s.endReason = 'Toute la ville de New Corrano te paie tribut. Tu es le Capo dei Capi.';
-  } else if (n >= 8 && s.respect >= 120) {
-    s.status = 'won';
-    s.endReason = 'Les familles survivantes viennent baiser ta bague. Tu es le Capo dei Capi.';
+    finalize(s, 'ruine', "Plus d'hommes, plus d'argent. Tu finis tes jours à servir des cafés à Little Sicily.");
   }
-  if (s.status !== 'playing') log(s, s.status === 'won' ? 'good' : 'bad', s.endReason);
+  if (s.status !== 'playing') return;
+  // une ville entièrement tenue : on l'annonce une fois
+  for (const c of CITIES) {
+    const all = cityDistricts(s, c.id);
+    if (all.length && all.every((d) => d.owner === 'player') && !(s.cityLords ?? []).includes(c.id)) {
+      (s.cityLords ??= []).push(c.id);
+      s.respect = clamp(s.respect + 10, 0, 150);
+      log(s, 'good', `Toute ${c.name} te paie tribut (+10 respect).`);
+      news(s, 5, `${c.name} n'a plus qu'un maître`, `Chaque quartier de ${c.name} verse désormais sa part à la ${s.familyName}.`);
+    }
+  }
 }
 
 export function fmt(n: number) {

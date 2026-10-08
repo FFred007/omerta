@@ -123,7 +123,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 .map-title h2 { font-family: var(--display); font-weight: 400; font-size: 20px; margin: 0; color: var(--ivory); }
 .map {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
   gap: 0;
   border: 2px solid var(--brass);
   padding: 6px;
@@ -217,7 +217,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 
 /* ---------- Panneau à onglets ---------- */
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md); min-width: 0; }
-.tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
 .tab {
   flex: 1 0 auto; padding: 11px 14px; background: none; border: none; border-bottom: 2px solid transparent;
   color: var(--ivory-dim); font-size: 13.5px; white-space: nowrap;
@@ -571,3 +571,32 @@ select {
 .contract { padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.14); margin-bottom: 6px; }
 .c-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; }
 .contract small { display: block; color: var(--ivory-dim); font-size: 11.5px; margin-top: 4px; }
+
+/* ---------- v0.7 : villes, Commission, fin choisie ---------- */
+.city-tabs { display: flex; gap: 6px; margin: 0 0 10px; overflow-x: auto; padding-bottom: 2px; }
+.city-tab {
+  flex: 1 0 auto; text-align: left; padding: 6px 10px; background: rgba(0, 0, 0, 0.18); color: var(--ivory-dim);
+  border: 1px solid var(--line); border-radius: var(--r-sm); cursor: pointer; min-width: 110px;
+}
+.city-tab b { display: block; font-weight: 700; font-size: 13px; color: var(--ivory); }
+.city-tab small { font-size: 11px; font-family: var(--ledger); }
+.city-tab.closed b { color: var(--ivory-dim); }
+.city-tab.active { border-color: var(--brass); background: rgba(196, 160, 82, 0.12); }
+.city-tab:hover { border-color: var(--brass-dim); }
+.city-card { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; margin: 10px 0; background: rgba(0, 0, 0, 0.12); }
+.city-card.open { border-color: var(--brass-dim); }
+.city-card.viewed { box-shadow: inset 3px 0 0 var(--brass); }
+.city-card .flavor { margin: 4px 0; }
+.expedition summary, .score-detail summary { cursor: pointer; color: var(--brass); font-size: 13px; margin: 6px 0; }
+.ladder { list-style: none; padding: 0; margin: 0; counter-reset: tier; }
+.ladder li { padding: 6px 10px; border-left: 3px solid var(--line); margin-bottom: 4px; color: var(--ivory-dim); }
+.ladder li small { display: block; font-size: 12px; }
+.ladder li.done { border-left-color: var(--brass-dim); }
+.ladder li.now { border-left-color: var(--brass); color: var(--ivory); background: rgba(196, 160, 82, 0.08); }
+.motion .odds { margin-bottom: 8px; }
+.final-score { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 12px 0; padding: 12px; border: 1px solid var(--brass-dim); position: relative; z-index: 1; }
+.final-score b { font-family: var(--display); font-weight: 400; font-size: 40px; color: var(--brass); }
+.final-score .rank { font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }
+.final-score small { color: var(--ivory-dim); font-size: 12px; }
+.score-detail { position: relative; z-index: 1; }
+.panel-body select { max-width: 100%; }

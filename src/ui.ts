@@ -1,7 +1,10 @@
 import {
   BUSINESSES, COP_BRIBE, COUNCIL_BRIBE, ESCORTS, GOOD_ORDER, GOODS, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE_COST, SPEAKEASY_DEMAND,
-  TARIFFS, dayLabel, rankOf, weekLabel,
+  CITIES, TARIFFS, TIERS, cityDef, dayLabel, rankOf, tierOf, weekLabel,
 } from './data';
+import * as CT from './cities';
+import * as CM from './commission';
+import * as SC from './score';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
 import * as B from './booze';
@@ -24,12 +27,14 @@ import {
 } from './state';
 import type { BusinessKind, District, Escort, GameState, Good, Job, Member, Owner, RivalFamily, Tariff } from './types';
 
-type Tab = 'quartier' | 'don' | 'business' | 'coups' | 'famille' | 'corruption' | 'rivaux' | 'journal';
+type Tab = 'quartier' | 'don' | 'business' | 'coups' | 'famille' | 'villes' | 'commission' | 'corruption' | 'rivaux' | 'journal';
 
 const ui = {
   tab: 'quartier' as Tab,
   selected: 'sicily',
+  city: 'corrano', // ville affichée sur la carte
   attackers: new Set<number>(),
+  expedition: new Set<number>(), // équipe pour prendre pied dans une ville
   showIntro: false,
   toast: '',
   toastTimer: 0,
@@ -51,6 +56,8 @@ const DAY_MS = 2600; // durée d'un jour à vitesse ×1
 
 let s: GameState = load() ?? E.startGame();
 if (s.week === 1 && s.log.length <= 1) ui.showIntro = true;
+ui.city = CT.donCity(s);
+if (CT.cityOf(district(s, ui.selected)) !== ui.city) ui.selected = CT.ownedIn(s, ui.city)[0]?.id ?? ui.selected;
 ui.shown = { dirty: s.dirty, clean: s.clean, respect: s.respect };
 const speed = () => s.speed ?? 1;
 
@@ -106,7 +113,8 @@ function busyLabel(m: Member) {
   if (j) return 'sur un coup';
   const o = onAttack(s, m.id);
   if (o) return `assaut sur ${district(s, o.districtId).name}`;
-  return m.assignment ? `garde ${district(s, m.assignment).name}` : 'réserve';
+  const city = CT.openCities(s).length > 1 ? ` · ${CT.cityName(CT.memberCity(m))}` : '';
+  return (m.assignment ? `garde ${district(s, m.assignment).name}` : 'réserve') + city;
 }
 
 // =====================================================================
@@ -235,7 +243,7 @@ function resolveWeek() {
   window.setTimeout(() => {
     E.endTurn(s);
     ui.attackers.clear();
-    if (district(s, ui.selected).owner !== 'player' && !isAttackable(s, district(s, ui.selected))) ui.selected = owned(s)[0]?.id ?? ui.selected;
+    if (district(s, ui.selected).owner !== 'player' && !isAttackable(s, district(s, ui.selected))) ui.selected = CT.ownedIn(s, ui.city)[0]?.id ?? ui.selected;
     ui.resolving = false;
     render();
     const fxEvents = s.fx ?? [];
@@ -257,7 +265,7 @@ function topbar() {
     <div class="brand">
       ${donOf(s) ? `<button class="brand-don" data-act="tab" data-id="don" aria-label="Voir le Don">${memberPortrait(donOf(s)!, 40)}</button>` : ''}
       <h1>Omertà</h1>
-      <span class="date">${esc(s.familyName)} · ${rankOf(s.respect)} · semaine ${s.week}</span>
+      <span class="date">${esc(s.familyName)} · ${s.commission?.chair ? 'Capo dei Capi' : rankOf(s.respect)} · semaine ${s.week} · ${donOf(s) ? 'le Don' : 'la famille'} à ${esc(CT.cityName(CT.donCity(s)))}</span>
     </div>
     <div class="ledger-strip">
       <div class="stat stat-dirty"><span class="k">Argent sale</span><span class="v dirty">${money(ui.shown.dirty)}</span></div>
@@ -280,7 +288,7 @@ function topbar() {
 }
 
 function mapView() {
-  const tiles = [...s.districts]
+  const tiles = CT.cityDistricts(s, ui.city)
     .sort((a, b) => a.row - b.row || a.col - b.col)
     .map((d) => {
       const mine = d.owner === 'player';
@@ -311,7 +319,7 @@ function mapView() {
     .join('');
   const legend = [
     `<span><i style="background:var(--player)"></i>${esc(s.familyName)}</span>`,
-    ...s.rivals.filter((r) => r.alive).map((r) => `<span><i style="background:${r.color}"></i>${esc(r.name)}${r.alliance ? ' (allié)' : r.war ? ' (guerre)' : ''}</span>`),
+    ...CT.rivalsIn(s, ui.city).filter((r) => r.alive).map((r) => `<span><i style="background:${r.color}"></i>${esc(r.name)}${r.alliance ? ' (allié)' : r.war ? ' (guerre)' : ''}</span>`),
     `<span><i style="background:var(--neutral)"></i>Indépendants</span>`,
   ].join('');
   const busy = [
@@ -322,8 +330,10 @@ function mapView() {
   <div class="map-wrap">
     ${inCoalition(s) ? `<div class="banner danger-banner">Les familles sont coalisées contre toi encore ${s.coalitionWeeks} semaine${(s.coalitionWeeks ?? 0) > 1 ? 's' : ''} : elles attaquent 60 % plus souvent et te visent en priorité.</div>` : ''}
     ${s.trial ? `<div class="banner danger-banner">Procès fédéral en cours : étape ${Math.min(4, s.trial.stage + 1)} sur 4 · ${Math.round(acquittalChance(s) * 100)} % d'acquittement pour l'instant.</div>` : ''}
-    <div class="map-title"><h2>New Corrano</h2><span class="muted" style="font-size:13px">${busy ? esc(busy) + ' · ' : ''}${owned(s).length} / 9 quartiers</span></div>
-    <div class="map">${tiles}</div>
+    ${CM.truceActive(s) ? `<div class="banner">Trêve générale de la Commission : encore ${s.commission!.truceWeeks} semaine${s.commission!.truceWeeks > 1 ? 's' : ''}. Un assaut te coûterait la face.</div>` : ''}
+    ${cityTabs()}
+    <div class="map-title"><h2>${esc(cityDef(ui.city).name)}</h2><span class="muted" style="font-size:13px">${busy ? esc(busy) + ' · ' : ''}${cityStatus(ui.city)}</span></div>
+    <div class="map" style="--cols:${cityDef(ui.city).cols}">${tiles}</div>
     <div class="legend">${legend}</div>
     ${objectivesBlock()}
     <div class="feed-wrap">
@@ -331,6 +341,26 @@ function mapView() {
       <ul id="feed" class="log feed" aria-live="polite"></ul>
     </div>
   </div>`;
+}
+
+function cityStatus(id: string) {
+  const all = CT.cityDistricts(s, id).length;
+  const mine = CT.ownedIn(s, id).length;
+  if (!CT.isOpen(s, id)) return 'la famille n’y est pas implantée';
+  const h = CT.holder(s, id);
+  const gov = CT.governor(s, id);
+  return `${mine} / ${all} quartiers · ${h === 'don' ? 'le Don est ici' : h === 'gouverneur' ? `gouverneur : ${esc(gov!.nickname)}` : '<span class="danger">personne ne tient la ville (revenus −30 %)</span>'}`;
+}
+
+function cityTabs() {
+  return `<div class="city-tabs" role="tablist" aria-label="Villes">${CITIES.map((c) => {
+    const open = CT.isOpen(s, c.id);
+    const mine = CT.ownedIn(s, c.id).length;
+    const don = CT.donCity(s) === c.id;
+    const warn = open && !CT.holder(s, c.id);
+    return `<button class="city-tab ${ui.city === c.id ? 'active' : ''} ${open ? 'open' : 'closed'}" role="tab" aria-selected="${ui.city === c.id}" data-act="city" data-id="${c.id}">
+      <b>${esc(c.name)}</b><small>${don ? '★ ' : ''}${open ? `${mine} quartier${mine > 1 ? 's' : ''}` : esc(c.kind)}${warn ? ' · !' : ''}</small></button>`;
+  }).join('')}</div>`;
 }
 
 function weekCard() {
@@ -442,6 +472,8 @@ function tabs() {
     ['business', 'Alcool', salesPlan(s).shortage ? '!' : ''],
     ['coups', 'Coups', String(s.jobs.length)],
     ['famille', 'Famille', `${activeMembers(s).length}${injured ? `+${injured}` : ''}`],
+    ['villes', 'Villes', CT.openCities(s).some((c) => !CT.holder(s, c.id)) ? '!' : String(CT.openCities(s).length)],
+    ['commission', 'Commission', s.commission ? `${Math.max(0, s.commission.next - s.week)} sem.` : ''],
     ['corruption', 'Réseau', s.trial ? 'procès' : (s.dossier ?? 0) >= 70 ? '!' : ''],
     ['rivaux', 'Rivaux', s.rivals.some((r) => r.war) ? 'guerre' : ''],
     ['journal', 'Journal', ''],
@@ -458,6 +490,8 @@ function panel() {
     case 'business': return businessPanel();
     case 'coups': return jobsPanel();
     case 'famille': return familyPanel();
+    case 'villes': return citiesPanel();
+    case 'commission': return commissionPanel();
     case 'corruption': return corruptionPanel();
     case 'rivaux': return rivalsPanel();
     case 'journal': return journalPanel();
@@ -481,6 +515,9 @@ function districtPanel(d: District) {
     </div>`;
 
   if (d.owner === 'player') html += ownDistrict(d);
+  else if (!CT.isOpen(s, CT.cityOf(d))) html += `<h4>Établissements</h4>${businessList(d, false)}
+      <p class="note">La famille n'est pas encore implantée à ${esc(CT.cityName(CT.cityOf(d)))}. ${d.gate ? 'C’est ici que tes hommes peuvent débarquer.' : ''}</p>
+      <button class="btn primary" data-act="tab" data-id="villes">Prendre pied à ${esc(CT.cityName(CT.cityOf(d)))}</button>`;
   else if (isAttackable(s, d)) html += attackPanel(d);
   else {
     html += `<h4>Établissements</h4>${businessList(d, false)}
@@ -515,7 +552,7 @@ function businessList(d: District, mine: boolean) {
 
 function ownDistrict(d: District) {
   const men = membersIn(s, d.id);
-  const reserve = activeMembers(s).filter((m) => m.assignment !== d.id);
+  const reserve = activeMembers(s).filter((m) => m.assignment !== d.id && CT.memberCity(m) === CT.cityOf(d));
   const full = d.businesses.length >= d.slots;
   const builds = (Object.keys(BUSINESSES) as BusinessKind[])
     .map((k) => {
@@ -567,7 +604,7 @@ function attackPanel(d: District) {
   if (r && r.alliance) {
     return `<h4>Établissements</h4>${businessList(d, false)}<p class="note">${esc(r.name)} est ton allié. Romps l'alliance dans l'onglet Rivaux pour pouvoir attaquer.</p>`;
   }
-  const avail = activeMembers(s);
+  const avail = activeMembers(s).filter((m) => CT.memberCity(m) === CT.cityOf(d));
   if (order && !ui.attackers.size) order.memberIds.forEach((id) => ui.attackers.add(id));
   const ids = [...ui.attackers].filter((id) => avail.some((m) => m.id === id && !((m.fatigue ?? 0) > 0)));
   const power = attackPower(s, ids);
@@ -584,7 +621,8 @@ function attackPanel(d: District) {
       <label class="check"><input type="checkbox" data-act="pick" data-id="${m.id}" ${ui.attackers.has(m.id) && !tired ? 'checked' : ''} ${tired ? 'disabled' : ''}>
         <span>${m.isDon ? '<b class="donmark">Le Don</b> ' : ''}${esc(m.nickname)} <span class="muted">· F${m.force}${m.rank === 'capo' ? '+2' : ''}${traitHint(m, 'assault')} · ${busyLabel(m)}</span></span></label>`;
     }).join('')
-      : '<p class="empty">Aucun homme disponible.</p>'}
+      : `<p class="empty">Aucun homme disponible à ${esc(CT.cityName(CT.cityOf(d)))}. Envoie des renforts depuis l'onglet Villes.</p>`}
+    ${CM.truceActive(s) ? '<p class="note danger">Trêve générale de la Commission en cours : attaquer te coûtera 5 de respect et 15 de relation avec chaque famille.</p>' : ''}
     <div class="odds" style="--odds:${tone}">
       Puissance <b class="num">${power}</b> contre défense <b class="num">${def}</b> ·
       <b style="color:${tone}">${verdict}${ids.length ? ` (${pct(p)})` : ''}</b>
@@ -693,10 +731,11 @@ function rewardText(j: Job) {
 
 function jobsPanel() {
   if (!s.jobs.length) return `<h3>Les coups</h3><p class="empty">Aucune opportunité cette semaine. Reviens après la fin de semaine.</p>`;
-  const avail = activeMembers(s);
+  const jobCity = s.jobs[0]?.city ?? 'corrano';
+  const avail = activeMembers(s).filter((m) => CT.memberCity(m) === jobCity);
   return `
-    <h3>Les coups de la semaine</h3>
-    <p class="flavor">Des opportunités qui ne se représenteront pas. Choisis une équipe : la force ou la discrétion décide. Les hommes engagés ne gardent pas leur quartier cette semaine.</p>
+    <h3>Les coups de la semaine · ${esc(CT.cityName(jobCity))}</h3>
+    <p class="flavor">Les opportunités viennent au Don, dans la ville où il se trouve. Seuls tes hommes présents à ${esc(CT.cityName(jobCity))} peuvent y participer. Choisis une équipe : la force ou la discrétion décide. Les hommes engagés ne gardent pas leur quartier cette semaine.</p>
     ${s.jobs.map((j) => {
       const skill = teamSkill(s, j);
       const p = jobChance(s, j);
@@ -783,7 +822,8 @@ function donPanel() {
     <h4>Talents</h4>
     <div class="branches">${branches}</div>
     ${familyBlock()}
-    ${dynastyBlock()}`;
+    ${dynastyBlock()}
+    ${endingBlock()}`;
 }
 
 function familyBlock() {
@@ -881,8 +921,12 @@ function familyPanel() {
       <div class="acts">
         <select data-act="assign-member" data-id="${m.id}" aria-label="Affectation de ${esc(m.nickname)}" ${m.status !== 'actif' ? 'disabled' : ''}>
           <option value="" ${!m.assignment ? 'selected' : ''}>Réserve</option>
-          ${mine.map((d) => `<option value="${d.id}" ${m.assignment === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
+          ${mine.filter((d) => CT.cityOf(d) === CT.memberCity(m)).map((d) => `<option value="${d.id}" ${m.assignment === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
         </select>
+        ${CT.openCities(s).length > 1 ? `<select data-act="travel" data-id="${m.id}" aria-label="Envoyer ${esc(m.nickname)} dans une autre ville" ${m.status === 'prison' ? 'disabled' : ''}>
+          <option value="">À ${esc(CT.cityName(CT.memberCity(m)))}</option>
+          ${CT.openCities(s).filter((c) => c.id !== CT.memberCity(m)).map((c) => `<option value="${c.id}">Envoyer à ${esc(c.name)} · ${money(CT.TRAVEL_COST)}</option>`).join('')}
+        </select>` : ''}
         ${fam ? '' : `<button class="btn small" data-act="bonus" data-id="${m.id}" ${s.dirty >= 300 ? '' : 'disabled'}>Prime 300 $</button>`}
         ${m.isDon ? `<button class="btn small" data-act="tab" data-id="don">Fiche du Don</button>` : ''}
         ${m.rank === 'soldat' ? `<button class="btn small" data-act="promote" data-id="${m.id}" ${canPromote ? '' : 'disabled'}>Faire capo · ${money(PROMOTE_COST)}</button>${missing ? `<span class="muted need">Il manque : ${missing}</span>` : ''}` : ''}
@@ -905,6 +949,137 @@ function familyPanel() {
         <button class="btn small" data-act="hire" data-id="${r.id}" ${s.dirty + s.clean >= cost ? '' : 'disabled'} title="Payé en sale d'abord, puis en propre">Recruter ${money(cost)}${cost < r.cost ? ' (recruteur)' : ''}</button></div>`;
     }).join('')}
     </div>`;
+}
+
+
+// ---------- Villes ----------
+function citiesPanel() {
+  const allowed = CT.citiesAllowed(s);
+  const n = CT.openCities(s).length;
+  const nextTier = CT.nextCityTier(s);
+  const don = donOf(s);
+  return `
+    <h3>Les villes</h3>
+    <p class="flavor">Le Don ne peut être qu'à un endroit à la fois. Ailleurs, un capo gouverneur tient la ville en ton nom ; sans lui, les hommes se servent dans la caisse (revenus −30 %) et leur loyauté s'effrite. Un gouverneur peu loyal peut faire sécession.</p>
+    <div class="facts"><span>Villes <b>${n}/${allowed}</b> autorisées par ton rang</span>${nextTier && n >= allowed ? `<span>Prochaine ville : <b>${esc(nextTier.name)}</b> (${nextTier.min} respect)</span>` : ''}<span>Voyage <b>${money(CT.TRAVEL_COST)}</b>/homme, 1 semaine sans assaut</span></div>
+    ${CITIES.map((c) => cityCard(c.id, allowed > n, don)).join('')}`;
+}
+
+function cityCard(id: string, canOpen: boolean, don: Member | undefined) {
+  const c = cityDef(id);
+  const open = CT.isOpen(s, id);
+  const men = CT.membersInCity(s, id);
+  const h = CT.holder(s, id);
+  const gov = CT.governor(s, id);
+  const candidates = men.filter((m) => CT.canGovern(m));
+  const rivals = CT.rivalsIn(s, id).filter((r) => r.alive);
+  let body = '';
+  if (open) {
+    body = `
+      <div class="facts">
+        <span>Quartiers <b>${CT.ownedIn(s, id).length}/${CT.cityDistricts(s, id).length}</b></span>
+        <span>Hommes sur place <b>${men.filter((m) => m.status === 'actif').length}</b></span>
+        <span>${h === 'don' ? '<b class="clean">Le Don est ici</b>' : h === 'gouverneur' ? `Gouverneur <b>${esc(gov!.nickname)}</b> · loyauté ${gov!.loyalty}` : '<b class="danger">Personne ne tient la ville : revenus −30 %</b>'}</span>
+      </div>
+      <div class="diplo">
+        ${don && CT.memberCity(don) !== id ? `<button class="btn small primary" data-act="travel-don" data-id="${id}" ${don.status === 'prison' ? 'disabled' : ''}>Le Don part pour ${esc(c.name)} · ${money(CT.TRAVEL_COST)}</button>` : ''}
+        <select data-act="governor" data-id="${id}" aria-label="Gouverneur de ${esc(c.name)}">
+          <option value="">${candidates.length ? 'Pas de gouverneur' : 'Aucun capo sur place'}</option>
+          ${candidates.map((m) => `<option value="${m.id}" ${gov?.id === m.id ? 'selected' : ''}>Gouverneur : ${esc(m.nickname)} (loyauté ${m.loyalty})</option>`).join('')}
+        </select>
+        <button class="btn small" data-act="city" data-id="${id}">Voir la carte</button>
+      </div>`;
+  } else {
+    const gate = s.districts.find((d) => d.id === c.gate);
+    const gateFree = gate?.owner === 'neutral';
+    const team = [...ui.expedition].map((x) => s.members.find((m) => m.id === x)).filter((m): m is Member => !!m && m.status === 'actif');
+    const cost = CT.openCost(s, id, team.length);
+    const leader = team.some((m) => m.isDon || CT.canGovern(m));
+    const pool = activeMembers(s).filter((m) => !(m.isChild && !CT.canGovern(m)));
+    body = `
+      <p class="note">${rivals.length ? `Tenue par ${rivals.map((r) => `<b style="color:${r.color}">${esc(r.name)}</b>`).join(', ')}.` : 'Plus aucune famille ne tient la ville.'} On débarque à ${esc(gate?.name ?? 'la gare')}, achetée ${money(c.openCost)}, avec une équipe menée par un capo qui deviendra gouverneur.</p>
+      ${!canOpen ? `<p class="note danger">Ton rang ne permet pas une ville de plus${CT.nextCityTier(s) ? ` : il faut être ${esc(CT.nextCityTier(s)!.name)} (${CT.nextCityTier(s)!.min} respect)` : ''}.</p>`
+        : !gateFree ? `<p class="note danger">${esc(gate?.name ?? 'La gare')} est déjà tenue : impossible d'y débarquer.</p>`
+        : `<details class="expedition" ${ui.expedition.size ? 'open' : ''}><summary>Préparer l'expédition</summary>
+          ${pool.map((m) => `<label class="check"><input type="checkbox" data-act="exp-pick" data-id="${m.id}" ${ui.expedition.has(m.id) ? 'checked' : ''}>
+            <span>${m.isDon ? '<b class="donmark">Le Don</b> ' : ''}${esc(m.nickname)} <span class="muted">· F${m.force} · ${m.rank === 'capo' ? 'capo' : rankTitle(m)} · ${busyLabel(m)}</span></span></label>`).join('')}
+          <div class="diplo"><button class="btn primary" data-act="open-city" data-id="${id}" ${team.length && leader && s.dirty + s.clean >= cost ? '' : 'disabled'}>Prendre pied à ${esc(c.name)} · ${money(cost)}</button>
+          ${!leader ? '<span class="muted need">Il faut un capo ou le Don dans l’équipe.</span>' : ''}</div>
+        </details>`}`;
+  }
+  return `<article class="city-card ${open ? 'open' : ''} ${ui.city === id ? 'viewed' : ''}">
+    <div class="job-head"><b>${esc(c.name)}</b><span class="tag">${esc(c.kind)}</span></div>
+    <p class="flavor">${esc(c.desc)}</p>
+    <p class="note">Atout : ${esc(c.perk)}.</p>
+    ${body}
+  </article>`;
+}
+
+// ---------- Commission ----------
+function commissionPanel() {
+  const c = CM.commission(s);
+  const tier = tierOf(s.respect);
+  const m = c.motion;
+  const ladder = TIERS.map((x, i) => `<li class="${i === tier ? 'now' : i < tier ? 'done' : ''}"><b>${esc(x.name)}</b> <span class="muted">${x.min} respect</span><small>${esc(x.perk)}</small></li>`).join('');
+  const weeks = Math.max(0, c.next - s.week);
+  const f = m ? CM.tallyForecast(s) : null;
+  const interest = m ? CM.playerInterest(s, m) : 'pour';
+  const dons = CM.living(s).map((r) => {
+    const promised = c.bought[r.id] as CM.Stance | undefined;
+    const st: CM.Stance = promised ?? CM.stance(s, r);
+    const target = m?.target === r.id;
+    const pr = CM.reliability(s, r);
+    const tone = st === interest ? 'clean' : st === 'indécis' ? 'muted' : 'danger';
+    return `<div class="row"><div class="grow"><span style="color:${r.color}">${esc(r.boss)}</span> <span class="muted">· ${esc(CT.cityName(r.city))} · relation ${Math.round(r.relation)}</span>
+      <small><b class="${tone}">${promised ? `promis ${promised}${c.pacts.includes(r.id) ? ' (pacte)' : ''} · tient parole à ${Math.round(pr * 100)} %` : st === 'indécis' ? `indécis · ${Math.round(CM.undecidedPour(s, r) * 100)} % pour` : st}</b></small></div>
+      ${m && !promised && !target && !r.war && st !== interest ? `<button class="btn small" data-act="buy-vote" data-id="${r.id}" ${s.dirty >= CM.voteCost(r) ? '' : 'disabled'} title="Il tient parole à ${Math.round(pr * 100)} %">Acheter sa voix ${interest} · ${money(CM.voteCost(r))}</button>
+        <button class="btn small" data-act="pact" data-id="${r.id}" ${r.relation >= CM.PACT_MIN_RELATION || r.alliance ? '' : 'disabled'} title="${CM.PACT_WEEKS} semaines de paix entre vous en échange de sa voix · relation ${CM.PACT_MIN_RELATION} requise">Pacte</button>` : ''}
+    </div>`;
+  }).join('');
+  const props = c.chair ? CM.proposable(s) : [];
+  return `
+    <h3>La Commission des Dons</h3>
+    <p class="flavor">Toutes les familles du pays se réunissent toutes les ${CM.MEETING_EVERY} semaines pour voter une motion. Une voix par famille ; à égalité, la motion est rejetée, sauf si le Capo dei Capi a voté pour. Les voix s'achètent et se promettent par pacte. Elles se trahissent aussi.</p>
+    <div class="facts">
+      <span>Ton rang <b>${esc(TIERS[tier].name)}</b></span>
+      <span>${c.chair ? '<b class="clean">Capo dei Capi</b>' : c.seat ? '<b class="clean">Tu sièges à la Commission</b>' : `Pas de siège${tier < CM.SEAT_TIER ? ` · candidature à ${TIERS[CM.SEAT_TIER].min} respect` : ' · ta candidature viendra au vote'}`}</span>
+      <span>Prochaine réunion <b>${weeks ? `dans ${weeks} sem.` : 'dimanche'}</b></span>
+    </div>
+    ${m ? `<article class="job staffed motion">
+      <div class="job-head"><b>${esc(m.title)}</b><span class="tag">ton intérêt : ${interest}</span></div>
+      <p>${esc(m.desc)}</p>
+      <div class="odds" style="--odds:${f!.pour > f!.contre ? 'var(--good)' : 'var(--oxblood-bright)'}">Voix sûres : <b class="num">${f!.pour}</b> pour, <b class="num">${f!.contre}</b> contre, <b class="num">${f!.undecided}</b> indécis</div>
+      ${c.seat ? `<div class="launder" role="group" aria-label="Ton vote"><span>Ta voix</span><span class="seg">
+        ${(['pour', 'contre'] as const).map((v) => `<button class="btn small ${c.vote === v ? 'on' : ''}" data-act="vote" data-id="${v}" aria-pressed="${c.vote === v}">${v === 'pour' ? 'Pour' : 'Contre'}</button>`).join('')}
+        <button class="btn small ${!c.vote ? 'on' : ''}" data-act="vote" data-id="" aria-pressed="${!c.vote}">Abstention</button></span></div>` : '<p class="note">Sans siège, tu ne votes pas : tu ne peux qu’acheter des voix.</p>'}
+      ${c.chair && props.length ? `<label class="note">Ordre du jour du Capo dei Capi
+        <select data-act="propose">${props.map((p, i) => `<option value="${i}" ${p.kind === m.kind && p.target === m.target ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select></label>` : ''}
+    </article>
+    <h4>Les Dons</h4>
+    <div class="rows">${dons || '<p class="empty">Plus aucune famille.</p>'}</div>` : '<p class="empty">Aucune motion à l’ordre du jour.</p>'}
+    <h4>Paliers de puissance</h4>
+    <ol class="ladder">${ladder}</ol>
+    ${c.history.length ? `<h4>Derniers votes</h4><ul class="log">${c.history.map((h) => `<li class="tone-${h.passed ? 'good' : 'neutral'}"><span class="w">S${h.week}</span>${esc(h.title)} : ${h.passed ? 'adoptée' : 'rejetée'} (${h.pour}–${h.contre})${h.betrayed ? ` · trahi par ${esc(h.betrayed.join(', '))}` : ''}</li>`).join('')}</ul>` : ''}`;
+}
+
+// ---------- Fin choisie ----------
+function endingBlock() {
+  const lines = SC.scoreLines(s);
+  const base = SC.scoreBase(s);
+  const legit = SC.legitBlockers(s);
+  const retireWhy = SC.retireBlocker(s);
+  const best = SC.readBest();
+  return `
+    <h4>Quitter la scène</h4>
+    <p class="note">Il n'y a pas de victoire automatique : c'est toi qui décides quand t'arrêter. Plus tu attends, plus l'empire vaut cher… et plus le procès, les balles et les traîtres se rapprochent. Mort ou condamné sans héritier : score ÷2.</p>
+    <div class="facts"><span>Valeur de l'empire <b class="num">${base}</b> · ${esc(SC.scoreRank(base))}</span>${best ? `<span>Record <b class="num">${best}</b></span>` : ''}</div>
+    <details class="score-detail"><summary>Détail du score</summary><div class="ledger-rows">${lines.map((l) => `<span>${esc(l.label)}</span><span class="num ${l.value < 0 ? 'danger' : 'clean'}">${l.value > 0 ? '+' : ''}${l.value}</span>`).join('')}</div></details>
+    <div class="diplo">
+      <button class="btn small" data-act="retire" ${retireWhy ? 'disabled' : ''} title="${esc(retireWhy ?? 'Score ×1')}">${ui.confirm === 'retire' ? 'Confirmer la retraite' : 'Prendre sa retraite · score ×1'}</button>
+      <button class="btn small primary" data-act="legit" ${legit.length ? 'disabled' : ''}>${ui.confirm === 'legit' ? 'Confirmer : se ranger' : 'Se ranger, devenir légitime · score ×1,5'}</button>
+    </div>
+    ${legit.length ? `<p class="note">La légitimité demande encore : ${esc(legit.join(', '))}.</p>` : '<p class="note clean">Tout est prêt pour devenir respectable.</p>'}
+    ${retireWhy ? `<p class="note">${esc(retireWhy)}</p>` : ''}`;
 }
 
 // ---------- Corruption ----------
@@ -1008,14 +1183,15 @@ function rivalsPanel() {
   return `
     <h3>Les familles</h3>
     <p class="flavor">Ta force de frappe : <b>${myForce}</b>. Une relation haute les dissuade de t'attaquer ; une guerre double leur agressivité.</p>
-    ${s.rivals.map((r) => {
+    ${CITIES.map((c) => `<h4>${esc(c.name)}</h4>` + CT.rivalsIn(s, c.id).map((r) => {
       const terr = owned(s, r.id).map((d) => d.name).join(', ');
       if (!r.alive) return `<div class="rival"><div class="rival-name" style="color:${r.color}">${esc(r.name)} <span class="muted">· éliminée</span></div><div class="boss">${esc(r.boss)} a quitté la ville.</div></div>`;
       const cd = r.talkCooldown ? ` (${r.talkCooldown} sem.)` : '';
       return `<div class="rival">
-        <div class="with-face">${portrait({ seed: seedOf(r.boss), size: 52, age: r.id === 'castellano' ? 61 : r.id === 'kilbride' ? 44 : 52, rank: 'rival', scars: r.id === 'kilbride' ? 1 : 0 })}<div>
+        <div class="with-face">${portrait({ seed: seedOf(r.boss), size: 52, age: 40 + (seedOf(r.boss) % 25), rank: 'rival', scars: r.id === 'kilbride' || r.id === 'vasquez' ? 1 : 0 })}<div>
         <div class="rival-name" style="color:${r.color}">${esc(r.name)}</div>
         <div class="boss">${esc(r.boss)}</div></div></div>
+        ${(r.bannedWeeks ?? 0) > 0 ? `<p class="note danger">Mise au ban par la Commission : encore ${r.bannedWeeks} sem.</p>` : ''}
         ${(r.traits ?? []).length ? `<span class="traits">${(r.traits ?? []).map((x) => `<span class="trait don" title="${esc(DON_TRAITS[x].desc)}">${esc(DON_TRAITS[x].name)}<small>${esc(DON_TRAITS[x].desc)}</small></span>`).join('')}</span>` : ''}
         <div class="facts" style="margin-top:6px">
           <span>Force <b>${Math.round(r.strength)}</b></span>
@@ -1037,7 +1213,7 @@ function rivalsPanel() {
                <button class="btn small danger" data-act="war" data-id="${r.id}">${ui.confirm === `war-${r.id}` ? 'Confirmer la guerre' : 'Déclarer la guerre'}</button>`}
         </div>
       </div>`;
-    }).join('')}`;
+    }).join('')).join('')}`;
 }
 
 // ---------- Journal ----------
@@ -1059,9 +1235,15 @@ function journalPanel() {
 // ---------- Modales ----------
 function modals() {
   if (s.status !== 'playing') {
+    const e = s.ending;
     return `<div class="overlay"><div class="modal" role="dialog" aria-modal="true">
-      <h2>${s.status === 'won' ? 'Capo dei Capi' : 'Fin de la famille'}</h2>
+      <h2>${esc(e?.title ?? (s.status === 'won' ? 'Capo dei Capi' : 'Fin de la famille'))}</h2>
       <p>${esc(s.endReason)}</p>
+      ${e ? `<div class="final-score"><span class="muted">Score final</span><b class="num">${e.score}</b><span class="rank">${esc(e.rank)}</span>
+        ${e.best !== undefined ? `<small>${e.score > e.best ? (e.best ? `Nouveau record (ancien : ${e.best})` : 'Premier record') : `Record : ${e.best}`}</small>` : ''}</div>
+      <details class="score-detail"><summary>Détail</summary><div class="ledger-rows">${e.lines.map((l) => `<span>${esc(l.label)}</span><span class="num ${l.value < 0 ? 'danger' : 'clean'}">${l.value > 0 ? '+' : ''}${l.value}</span>`).join('')}
+        <span class="total">Valeur de l'empire</span><span class="num total">${e.base}</span>
+        <span>${esc(e.title)}</span><span class="num">×${e.mult.toLocaleString('fr-FR')}</span></div></details>` : ''}
       <div class="facts"><span>Semaines <b>${s.week - 1}</b></span><span>Combats gagnés <b>${s.stats.battlesWon}</b></span>
         <span>Perdus <b>${s.stats.battlesLost}</b></span><span>Coups réussis <b>${s.stats.jobsDone}</b></span>
         <span>Caisses vendues <b>${s.stats.cratesSold}</b></span><span>Descentes subies <b>${s.stats.raids}</b></span>
@@ -1072,7 +1254,8 @@ function modals() {
   if (ui.showIntro) {
     return `<div class="overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="intro-t">
       <h2 id="intro-t">New Corrano, 1925</h2>
-      <p>Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy, une cave de 45 caisses et quatre hommes. Les Castellano, les Irlandais de Kilbride et le clan Wolska se partagent le reste de la ville.</p>
+      <p>Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy, une cave de 45 caisses et quatre hommes. Les Castellano, les Irlandais de Kilbride et le clan Wolska se partagent le reste de la ville. Plus loin, Port Halloran, Mirage Springs et Washburn attendent leur heure.</p>
+      ${SC.readBest() ? `<p class="muted">Ton record : ${SC.readBest()} points.</p>` : ''}
       <ul class="rules">${rulesList()}</ul>
       <label for="fam" class="muted" style="font-size:13px">Nom de ta famille</label>
       <input id="fam" type="text" value="${esc(s.familyName)}" maxlength="32">
@@ -1099,8 +1282,9 @@ function rulesList() {
     <li><b>Commerçants</b> : règle le tarif de protection. Rends-leur service, ils te devront des faveurs.</li>
     <li><b>Argent</b> : le <span class="dirty">sale</span> vient des rackets ; les façades le blanchissent en <span class="clean">propre</span>, qui paie flics, juges et élus.</li>
     <li><b>Heat et dossier fédéral</b> : la heat nourrit le dossier fédéral. À 100, le Don passe en procès. Ton réseau (journalistes, flics, juges) t'aide à tenir.</li>
-    <li><b>Puissance</b> : au-delà de ${COALITION_AT} quartiers, les familles peuvent se coaliser contre toi.</li>
-    <li><b>Victoire</b> : les 9 quartiers, ou 8 quartiers avec 120 de respect.</li>`;
+    <li><b>Villes</b> : le respect ouvre d'autres villes (le port, la ville du jeu, la capitale). Le Don n'est que dans l'une ; un capo gouverneur tient les autres.</li>
+    <li><b>Commission des Dons</b> : toutes les ${CM.MEETING_EVERY} semaines, les familles votent. Obtiens un siège, achète des voix, deviens Capo dei Capi. Au-delà de ${COALITION_AT} quartiers, elles peuvent te mettre au ban.</li>
+    <li><b>La fin, c'est toi qui la choisis</b> : retraite ou légitimité (score ×1,5). Mort ou condamné sans héritier, le score est divisé par deux.</li>`;
 }
 
 // =====================================================================
@@ -1203,6 +1387,38 @@ app.addEventListener('click', (ev) => {
       return run(r);
     }
     case 'cancel-attack': ui.attackers.clear(); return run(E.cancelAttack(s, id));
+    case 'city': {
+      ui.city = id;
+      if (CT.cityOf(district(s, ui.selected)) !== id) {
+        ui.selected = CT.ownedIn(s, id)[0]?.id ?? cityDef(id).gate ?? CT.cityDistricts(s, id)[0].id;
+        ui.attackers.clear();
+      }
+      if (el.classList.contains('btn')) ui.tab = 'quartier';
+      return render();
+    }
+    case 'travel-don': {
+      const don = donOf(s);
+      if (!don) return;
+      const r = CT.travel(s, don.id, id);
+      if (r.ok) ui.city = id;
+      return run(r);
+    }
+    case 'open-city': {
+      const r = CT.openCity(s, id, [...ui.expedition]);
+      if (r.ok) { ui.expedition.clear(); ui.city = id; ui.selected = cityDef(id).gate ?? ui.selected; }
+      return run(r);
+    }
+    case 'buy-vote': {
+      const m = s.commission?.motion;
+      return run(m ? CM.buyVote(s, id, CM.playerInterest(s, m)) : { ok: false, error: 'Aucune motion.' });
+    }
+    case 'pact': {
+      const m = s.commission?.motion;
+      return run(m ? CM.makePact(s, id, CM.playerInterest(s, m)) : { ok: false, error: 'Aucune motion.' });
+    }
+    case 'vote': return run(CM.setVote(s, (id || null) as 'pour' | 'contre' | null));
+    case 'retire': if (confirmed('retire')) run(SC.retire(s)); return;
+    case 'legit': if (confirmed('legit')) run(SC.goLegit(s)); return;
     case 'end': return resolveWeek();
     case 'play': ui.playing = !ui.playing; return updateClock();
     case 'speed': s.speed = Number(id); save(s); return render();
@@ -1227,6 +1443,8 @@ app.addEventListener('click', (ev) => {
       clearSave();
       s = E.startGame();
       ui.selected = 'sicily';
+      ui.city = 'corrano';
+      ui.expedition.clear();
       ui.tab = 'quartier';
       ui.attackers.clear();
       ui.showIntro = true;
@@ -1255,6 +1473,17 @@ app.addEventListener('change', (ev) => {
     run(E.assign(s, Number(el.value), ui.selected));
   } else if (act === 'assign-member') {
     run(E.assign(s, Number(el.dataset.id), el.value || null));
+  } else if (act === 'travel' && el.value) {
+    run(CT.travel(s, Number(el.dataset.id), el.value));
+  } else if (act === 'governor') {
+    run(CT.setGovernor(s, el.dataset.id!, el.value ? Number(el.value) : null));
+  } else if (act === 'exp-pick') {
+    const mid = Number(el.dataset.id);
+    if ((el as HTMLInputElement).checked) ui.expedition.add(mid);
+    else ui.expedition.delete(mid);
+    render();
+  } else if (act === 'propose') {
+    run(CM.propose(s, Number(el.value)));
   }
 });
 

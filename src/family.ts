@@ -3,6 +3,7 @@ import { DON_START_AGE, YEAR_WEEKS, ageOf, donHasTalent, donOf } from './don';
 import { activeMembers, chance, clamp, log, news, nextId, pick, randInt, rival } from './state';
 import type { TraitId } from './traits';
 import type { Child, Courtship, GameState, Member, PendingEvent } from './types';
+import { finalize } from './score';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -43,13 +44,12 @@ const SURNAMES: Record<SpouseOrigin, string[]> = {
   banquier: ['Whitmore', 'Ashford', 'Vanderberg', 'Sterling', 'Crane'],
   commercante: ['Colombo', 'Benedetti', 'Lombardo', 'Rossi', 'Ferraro'],
 };
-const RIVAL_SURNAME: Record<string, string> = { castellano: 'Castellano', kilbride: 'Kilbride', wolska: 'Wolska' };
 
 export const spouseHas = (s: GameState, t: SpouseTraitId) => !!s.spouse?.traits.includes(t);
 
 export function makeCandidate(s: GameState, origin: SpouseOrigin, rivalId?: string): Courtship {
   const first = pick(FEMALE_NAMES);
-  const last = origin === 'rivale' ? RIVAL_SURNAME[rivalId ?? ''] ?? 'Castellano' : pick(SURNAMES[origin]);
+  const last = origin === 'rivale' ? rival(s, rivalId ?? '')?.surname ?? 'Castellano' : pick(SURNAMES[origin]);
   const traits: SpouseTraitId[] = [ORIGIN_TRAIT[origin]];
   if (chance(0.55)) {
     const extra = (Object.keys(SPOUSE_TRAITS) as SpouseTraitId[]).filter((x) => !traits.includes(x));
@@ -307,9 +307,7 @@ export function familyTick(s: GameState) {
         reg.regentId = undefined;
         reg.regentName = s.spouse?.name ?? 'les anciens de la famille';
       } else if (regent.loyalty < 50 && chance(0.05)) {
-        s.status = 'lost';
-        s.endReason = `${regent.name} « ${regent.nickname} », le régent, a fait disparaître ${heir.name} et pris la tête de la famille.`;
-        log(s, 'bad', s.endReason);
+        finalize(s, 'mort', `${regent.name} « ${regent.nickname} », le régent, a fait disparaître ${heir.name} et pris la tête de la famille.`);
       }
     }
   }
@@ -346,9 +344,7 @@ export function succession(s: GameState, don: Member, cause: string) {
 
   const heir = currentHeir(s);
   if (!heir) {
-    s.status = 'lost';
-    s.endReason = `${don.name} ${cause}. Sans héritier, la lignée s'éteint et la famille se disperse.`;
-    log(s, 'bad', s.endReason);
+    finalize(s, /condamn/.test(cause) ? 'prison' : 'mort', `${don.name} ${cause}. Sans héritier, la lignée s'éteint et la famille se disperse.`);
     return;
   }
   // la famille vacille

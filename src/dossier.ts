@@ -3,6 +3,7 @@ import { DON_SEEN_HEAT, donHasTalent, donOf } from './don';
 import { succession } from './family';
 import { isActive, networkDossier } from './network';
 import { clamp, log, news, owned } from './state';
+import { capitalFriends } from './cities';
 import type { GameState, PendingEvent } from './types';
 
 export const DOSSIER_SEEN = 4; // le Don vu sur une opération
@@ -26,6 +27,8 @@ export function dossierForecast(s: GameState) {
   else if (s.heat < 20) lines.push({ label: 'Heat basse : le dossier prend la poussière', value: -1 });
   const size = Math.floor(owned(s).length / 3);
   if (size) lines.push({ label: `Ton empire attire l'attention (${owned(s).length} quartiers)`, value: size });
+  const cap = capitalFriends(s);
+  if (cap) lines.push({ label: `Tes amis de Washburn (${cap} quartier${cap > 1 ? 's' : ''})`, value: -cap });
   const net = networkDossier(s);
   if (net) lines.push({ label: 'Ton réseau dans la justice', value: net });
   return lines;

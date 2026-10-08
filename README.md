@@ -1,6 +1,6 @@
 # Omertà
 
-Jeu de gestion de mafia au tour par tour dans le navigateur. New Corrano, 1925, en pleine Prohibition : tu reprends une petite famille, tu fais tourner la contrebande, tu montes des coups, tu tiens tes commerçants et tu manœuvres entre les familles pour devenir le Capo dei Capi.
+Jeu de gestion de mafia au tour par tour dans le navigateur. New Corrano, en pleine Prohibition : tu reprends une petite famille, tu fais tourner la contrebande, tu montes des coups, tu tiens tes commerçants et tu t'implantes dans d'autres villes, tu manœuvres à la Commission des Dons pour devenir le Capo dei Capi, et tu choisis toi-même quand quitter la scène.
 
 ## Jouer en local
 
@@ -24,9 +24,13 @@ npm test 400                         # 400 parties jouées par un bot (bot compl
 npx vite-node tests/sim.ts 300 --dumb # bot naïf : ni coups, ni contrebande, ni diplomatie
 npx vite-node tests/forecast.ts      # prévisions = ce que le moteur applique (0 écart attendu)
 npx vite-node tests/calib.ts         # % affiché = taux de réussite réel (assauts et coups)
+npx vite-node tests/cities.ts        # villes, gouverneurs, Commission, fin choisie, migration
+npx vite-node tests/sim.ts 300 --retire=50   # le bot prend sa retraite à la semaine 50
 ```
 
-Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérives, pas à mesurer la difficulté pour un humain. Repère v0.6 : environ 50 % de victoires pour un bot qui ignore la heat, le réseau et la famille.
+Options du bot : `--onecity` (reste à New Corrano), `--nocomm` (n'achète aucune voix), `--retire=N`.
+
+Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérives, pas à mesurer la difficulté pour un humain. Repère v0.7 : un bot qui ignore la heat et le réseau finit surtout condamné ; s'il prend sa retraite à la semaine 30, il réussit dans 40 % des parties (score moyen ~2 200), à la semaine 50 dans 20 % (~4 200).
 
 ## Règles
 
@@ -41,14 +45,16 @@ Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérive
 - **Heat.** Monte avec les commerces illégaux, les assauts, les coups et le cash stocké. Elle attire les descentes et nourrit le dossier fédéral.
 - **Dossier fédéral.** Monte avec la heat (+1 dès 40, jusqu'à +10 dès 90), la taille de l'empire, le Don vu sur une opération, les arrestations, les traîtres, les braquages et les scandales. À 100 : procès en 3 étapes (jury, témoin, avocat) puis verdict, chance d'acquittement exacte. Coupable : 20 ans, l'héritier reprend.
 - **Réseau.** Reporter et rédacteur en chef du Herald, capitaine et commissaire, greffier et procureur adjoint, maire, curé, orphelinat, agent fédéral : mensualités et actions ponctuelles, introductions, avidité, scandales, rachat par un rival.
-- **Pression.** Au-delà de 5 quartiers, les familles peuvent se coaliser 8 semaines contre toi ; un capo ambitieux peu loyal peut tenter un coup d'État ; les ennemis jurés tentent d'assassiner le Don.
+- **Villes.** New Corrano, Port Halloran (le port : contrebande −15 % et moins risquée), Mirage Springs (la ville du jeu : tripots ×1,5) et Washburn (la capitale : dossier −1 par quartier tenu). Chacune a ses familles, qui vivent et se battent même sans toi. On s'implante en achetant la gare avec une équipe menée par un capo, qui devient gouverneur. Le Don n'est que dans une ville à la fois : les coups viennent là où il est. Une ville sans le Don ni gouverneur rapporte 30 % de moins et ses hommes perdent en loyauté. Un gouverneur peu loyal peut faire sécession. Voyage : 150 $ par homme, une semaine sans assaut.
+- **Paliers de puissance.** Petite bande, Famille de quartier (le juge), Famille établie (2 villes, le conseiller), Grande famille (3 villes, candidature à la Commission), Parrain (4 villes, présidence, légitimité).
+- **Commission des Dons.** Toutes les 4 semaines, les 8 familles du pays votent une motion annoncée à l'avance : admission du joueur, présidence (Capo dei Capi), mise au ban du joueur (coalition de 8 semaines) ou d'un rival, trêve générale, ouverture des quais, dîme. Chaque Don a une position (pour, contre, indécis avec sa probabilité). Les voix s'achètent ou se promettent par pacte (6 semaines de paix), et un Don peut trahir sa parole. Violer une trêve de la Commission coûte la face.
+- **Pression.** Un capo ambitieux peu loyal peut tenter un coup d'État ; les ennemis jurés tentent d'assassiner le Don.
 - **Contrats.** Trois objectifs à moyen terme en permanence, avec échéance et récompense.
 - **Hommes.** Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat la plus utilisée ; tous les deux niveaux, un trait (Tireur d'élite, Gueule cassée, Fantôme, Comptable, Chauffeur, Négociateur…). Rangs : Recrue, Soldat, Homme de confiance, Vétéran, Capo. Les 4 recrues sont renouvelées chaque semaine, avec leurs traits et parfois un défaut (Bavard, Cupide, Ivrogne, Trouillard). Les Dons rivaux ont aussi des traits, et en gagnent avec leurs victoires (Aguerri) ou leurs défaites contre toi (Revanchard).
 - **Le Don.** Ton personnage : Poigne, Ombre, Verbe, Flair, expérience double, et des points à placer en stats ou en talents (Boucher, Renard, Parrain : 5 talents chacun). Il peut monter au front (assauts, coups) : +2 par homme à ses côtés, +2 respect, mais +5 heat (vu sur les lieux), blessures, cicatrices, arrestation ou mort.
 - **La famille du Don.** Rencontres (chanteuse, héritière, fille de commerçant, fille d'un Don rival qui scelle une alliance), cour, mariage, épouse avec traits et affection, grossesse, naissances, éducation à 6 et 12 ans, entrée dans les affaires à 16 ans. 1 an = 6 semaines. Si le Don meurt ou tombe pour 20 ans, l'héritier reprend avec la moitié de ses talents ; s'il est mineur, un régent tient la famille ; sans enfant, la partie s'achève.
 - **Portraits.** Générés en SVG (gravure de journal), ils évoluent avec l'âge, les cicatrices et le rang.
-- **Rang.** Petite bande → Famille de quartier → Famille établie → Grande famille → Capo dei Capi, selon le respect.
-- **Victoire :** 9 quartiers, ou 8 quartiers et 120 de respect. **Défaite :** arrestation, plus aucun quartier, ou faillite sans hommes.
+- **Fin choisie.** Pas de victoire automatique. À partir de la semaine 12, le Don peut prendre sa retraite (score ×1), ou se ranger s'il est Parrain, siège à la Commission, a 30 000 $ propres, un dossier ≤ 30 et une heat ≤ 30 (score ×1,5). Le score additionne fortune, quartiers, villes, établissements, respect, Commission, hommes, famille et générations, moins le dossier et la heat. Mort ou condamné sans héritier : ×0,5 ; plus aucun quartier : ×0,25. Le record est gardé dans le navigateur.
 
 ## Structure
 
@@ -70,6 +76,9 @@ src/
   portraits.ts  portraits SVG générés
   network.ts    réseau d'influence
   dossier.ts    dossier fédéral et procès
+  cities.ts     villes, voyages, gouverneurs, implantation
+  commission.ts Commission des Dons : motions, votes, pactes, trahisons
+  score.ts      fin choisie et score final
   pressure.ts   coalition, capos ambitieux, tentatives d'assassinat
   objectives.ts contrats à moyen terme
   fx.ts         effets visuels : camions, fusillades, compteurs, une du journal

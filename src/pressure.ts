@@ -1,8 +1,9 @@
 // Plus tu es puissant, plus tu es une cible : coalition des rivaux, capos ambitieux, tentatives d'assassinat.
 import { donOf } from './don';
 import { killMember } from './engine';
-import { chance, clamp, log, news, owned, pick, randInt, rival, winChance } from './state';
-import type { GameState, PendingEvent } from './types';
+import { chance, clamp, log, news, pick, randInt, rival, winChance } from './state';
+import { cityName, cityOf, donCity, governor, memberCity } from './cities';
+import type { GameState, Member, PendingEvent } from './types';
 
 export const COALITION_AT = 5; // quartiers à partir desquels les rivaux s'organisent
 export const COALITION_WEEKS = 8;
@@ -18,17 +19,37 @@ function bodyguards(s: GameState) {
 }
 const killers = (s: GameState, rid: string) => Math.max(6, (rival(s, rid)?.strength ?? 10) * 0.45);
 
+/** Chance que des tueurs fidèles éliminent un gouverneur rebelle */
+export function hitChance(s: GameState, m: Member) {
+  const loyal = s.members.filter((x) => x.status === 'actif' && !x.isDon && x.id !== m.id && memberCity(x) !== memberCity(m)).sort((a, b) => b.force - a.force).slice(0, 3);
+  const guards = s.members.filter((x) => x.status === 'actif' && x.id !== m.id && memberCity(x) === memberCity(m) && !x.isDon && !x.isChild);
+  return winChance(loyal.reduce((t, x) => t + x.force, 0) + 2, m.force + 2 + guards.reduce((t, x) => t + x.force, 0) / 3);
+}
+
+/** Le gouverneur part avec la ville : quartiers rendus aux indépendants, ses hommes avec lui */
+function secede(s: GameState, m: Member, city: string) {
+  const men = s.members.filter((x) => memberCity(x) === city && !x.isDon && !x.isChild);
+  const force = men.reduce((t, x) => t + x.force, 0);
+  const lost = s.districts.filter((d) => d.owner === 'player' && cityOf(d) === city);
+  lost.forEach((d) => { d.owner = 'neutral'; d.garrison = Math.max(8, Math.round(force / Math.max(1, lost.length)) + 4); d.bribedCop = false; });
+  const ids = new Set(men.map((x) => x.id));
+  s.members = s.members.filter((x) => !ids.has(x.id));
+  s.orders.forEach((o) => (o.memberIds = o.memberIds.filter((id) => !ids.has(id))));
+  s.orders = s.orders.filter((o) => o.memberIds.length);
+  s.jobs.forEach((j) => (j.team = j.team.filter((id) => !ids.has(id))));
+  if (s.cities?.[city]) { s.cities[city].governorId = null; s.cities[city].open = false; }
+  s.respect = clamp(s.respect - 8, 0, 150);
+  log(s, 'bad', `${m.nickname} fait sécession avec ${men.length} homme${men.length > 1 ? 's' : ''} : ${cityName(city)} est perdue (−8 respect).`);
+  news(s, 5, `Schisme à ${cityName(city)}`, `${m.name} rompt avec la ${s.familyName} et garde la ville pour lui.`);
+}
+
 export function pressureTick(s: GameState) {
   // coalition
   if (inCoalition(s)) {
     s.coalitionWeeks! -= 1;
     if (!s.coalitionWeeks) log(s, 'neutral', 'La coalition des familles se disloque. Chacun retourne à ses affaires.');
-  } else if (owned(s).length >= COALITION_AT && chance(0.12)) {
-    s.coalitionWeeks = COALITION_WEEKS;
-    s.rivals.filter((r) => r.alive && !r.alliance).forEach((r) => (r.relation = clamp(r.relation - 15, -100, 100)));
-    log(s, 'bad', `Les familles se sont réunies sans toi : pendant ${COALITION_WEEKS} semaines, elles te visent toutes.`);
-    news(s, 5, 'La Commission se réunit sans le Don', 'Les familles de New Corrano auraient conclu un pacte : arrêter l’ascension de Little Sicily.');
   }
+  // (la coalition naît désormais d'un vote de la Commission des Dons)
   if (s.pendingEvent || s.status !== 'playing') return;
   const don = donOf(s);
 
@@ -44,6 +65,26 @@ export function pressureTick(s: GameState) {
         { label: 'Le faire disparaître', hint: '+3 respect, les autres hommes −5 loyauté', effect: 'pr_amb_kill' },
         { label: 'Le couvrir d’or', hint: '−2 500 sale · sa loyauté +35', effect: 'pr_amb_pay', disabled: s.dirty < 2500 },
         { label: 'Faire comme si de rien n’était', hint: 'Il pourrait tenter sa chance', effect: 'pr_amb_ignore' },
+      ],
+    };
+    return;
+  }
+
+  // un gouverneur peu loyal fait sécession
+  const rebels = Object.entries(s.cities ?? {})
+    .map(([city]) => ({ city, g: governor(s, city) }))
+    .filter((x) => x.g && x.city !== donCity(s) && x.g.loyalty < 40 && x.g.status === 'actif');
+  if (rebels.length && chance(0.06)) {
+    const { city, g } = pick(rebels);
+    const m = g!;
+    s.pendingEvent = {
+      key: 'secession', title: `${m.nickname} se proclame Don de ${cityName(city)}`,
+      text: `Loin du Don, ${m.name} « ${m.nickname} » (loyauté ${m.loyalty}) a réuni tes hommes de ${cityName(city)} : il garde la caisse et menace de faire sécession.`,
+      data: { member: m.id, city },
+      choices: [
+        { label: 'Le couvrir d’or', hint: '−3 000 sale · loyauté +30', effect: 'pr_sec_pay', disabled: s.dirty < 3000 },
+        { label: 'Envoyer des tueurs', hint: `${Math.round(hitChance(s, m) * 100)} % de l’éliminer · sinon il part avec la ville`, effect: 'pr_sec_hit' },
+        { label: 'Le laisser partir', hint: `Tu perds tes quartiers de ${cityName(city)} et les hommes qui y sont`, effect: 'pr_sec_go' },
       ],
     };
     return;
@@ -103,6 +144,24 @@ export function resolvePressureEffect(s: GameState, effect: string, ev: PendingE
           news(s, 5, 'Fusillade chez le Don', 'Règlement de comptes interne dans la famille de Little Sicily. Le Don aurait survécu.');
         }
       }
+      break;
+    case 'pr_sec_pay':
+      s.dirty -= 3000;
+      if (m) { m.loyalty = clamp(m.loyalty + 30, 0, 100); log(s, 'neutral', `${m.nickname} rentre dans le rang. Pour l'instant.`); }
+      break;
+    case 'pr_sec_hit': {
+      const city = String(ev.data?.city);
+      if (!m) break;
+      if (Math.random() < hitChance(s, m)) {
+        killMember(s, m, 'a été abattu sur ordre du Don');
+        if (s.cities?.[city]) s.cities[city].governorId = null;
+        s.respect = clamp(s.respect + 3, 0, 150);
+        log(s, 'good', `${m.nickname} ne gouvernera plus rien. ${cityName(city)} reste à la famille, sans gouverneur.`);
+      } else secede(s, m, city);
+      break;
+    }
+    case 'pr_sec_go':
+      if (m) secede(s, m, String(ev.data?.city));
       break;
     case 'pr_fight': {
       const r = rival(s, String(ev.data?.rival));
