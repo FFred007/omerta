@@ -9,6 +9,9 @@ import * as D from './diplomacy';
 import * as E from './engine';
 import { resolveEvent } from './events';
 import { DON_TRAITS, TRAITS, rankTitle, xpForNext, type TraitId } from './traits';
+import { BRANCHES, DON_STATS, STAT_CAP, TALENTS, ageOf, canLearn, donOf, donXpForNext, learnTalent, spendPoint, type Branch, type DonStat, type TalentId } from './don';
+import * as F from './family';
+import { portrait, seedOf } from './portraits';
 import { jobChance, teamSkill, toggleJobMember } from './jobs';
 import { ALIBI_HEAT, favorAlibi, favorFreePrisoner, moodLabel, setTariff } from './shops';
 import {
@@ -17,7 +20,7 @@ import {
 } from './state';
 import type { BusinessKind, District, Escort, GameState, Good, Job, Member, Owner, RivalFamily, Tariff } from './types';
 
-type Tab = 'quartier' | 'business' | 'coups' | 'famille' | 'corruption' | 'rivaux' | 'journal';
+type Tab = 'quartier' | 'don' | 'business' | 'coups' | 'famille' | 'corruption' | 'rivaux' | 'journal';
 
 const ui = {
   tab: 'quartier' as Tab,
@@ -248,6 +251,7 @@ function topbar() {
   return `
   <header class="topbar">
     <div class="brand">
+      ${donOf(s) ? `<button class="brand-don" data-act="tab" data-id="don" aria-label="Voir le Don">${memberPortrait(donOf(s)!, 40)}</button>` : ''}
       <h1>Omertà</h1>
       <span class="date">${esc(s.familyName)} · ${rankOf(s.respect)} · semaine ${s.week}</span>
     </div>
@@ -424,6 +428,7 @@ function tabs() {
   const injured = s.members.filter((m) => m.status !== 'actif').length;
   const items: [Tab, string, string][] = [
     ['quartier', 'Quartier', ''],
+    ['don', s.regency ? 'Régence' : donOf(s)?.sex === 'f' ? 'La Donna' : 'Le Don', donOf(s)?.points ? `+${donOf(s)!.points}` : s.spouse?.pregnantWeeks ? '♥' : ''],
     ['business', 'Alcool', salesPlan(s).shortage ? '!' : ''],
     ['coups', 'Coups', String(s.jobs.length)],
     ['famille', 'Famille', `${activeMembers(s).length}${injured ? `+${injured}` : ''}`],
@@ -439,6 +444,7 @@ function tabs() {
 function panel() {
   switch (ui.tab) {
     case 'quartier': return districtPanel(district(s, ui.selected));
+    case 'don': return donPanel();
     case 'business': return businessPanel();
     case 'coups': return jobsPanel();
     case 'famille': return familyPanel();
@@ -566,7 +572,7 @@ function attackPanel(d: District) {
       const tired = (m.fatigue ?? 0) > 0;
       return `
       <label class="check"><input type="checkbox" data-act="pick" data-id="${m.id}" ${ui.attackers.has(m.id) && !tired ? 'checked' : ''} ${tired ? 'disabled' : ''}>
-        <span>${esc(m.nickname)} <span class="muted">· F${m.force}${m.rank === 'capo' ? '+2' : ''}${traitHint(m, 'assault')} · ${busyLabel(m)}</span></span></label>`;
+        <span>${m.isDon ? '<b class="donmark">Le Don</b> ' : ''}${esc(m.nickname)} <span class="muted">· F${m.force}${m.rank === 'capo' ? '+2' : ''}${traitHint(m, 'assault')} · ${busyLabel(m)}</span></span></label>`;
     }).join('')
       : '<p class="empty">Aucun homme disponible.</p>'}
     <div class="odds" style="--odds:${tone}">
@@ -700,7 +706,7 @@ function jobsPanel() {
             const inThis = j.team.includes(m.id);
             const stat = j.stat === 'force' ? m.force : m.discretion;
             return `<label class="check"><input type="checkbox" data-act="job-pick" data-job="${j.id}" data-id="${m.id}" ${inThis ? 'checked' : ''} ${tired ? 'disabled' : ''}>
-              <span>${esc(m.nickname)} <span class="muted">· ${j.stat === 'force' ? 'F' : 'D'}${stat}${m.rank === 'capo' ? '+2' : ''}${traitHint(m, j.stat)}${inThis ? '' : ' · ' + busyLabel(m)}</span></span></label>`;
+              <span>${m.isDon ? '<b class="donmark">Le Don</b> ' : ''}${esc(m.nickname)} <span class="muted">· ${j.stat === 'force' ? 'F' : 'D'}${stat}${m.rank === 'capo' ? '+2' : ''}${traitHint(m, j.stat)}${inThis ? '' : ' · ' + busyLabel(m)}</span></span></label>`;
           }).join('')}
         </div>
         <div class="odds" style="--odds:${j.team.length ? oddsTone(p) : 'var(--line)'}">
@@ -711,6 +717,126 @@ function jobsPanel() {
         </div>
       </article>`;
     }).join('')}`;
+}
+
+// ---------- Portraits ----------
+function memberPortrait(m: Member, size: number) {
+  const age = m.birthWeek !== undefined ? ageOf(s, m) : 24 + (m.level ?? 0) * 3 + (seedOf(m.name) % 12);
+  const rank = m.isDon ? 'boss' : m.rank === 'capo' ? 'capo' : 'soldat';
+  return portrait({ seed: m.seed ?? seedOf(m.name, m.id), size, age, sex: m.sex, scars: m.scars ?? 0, rank });
+}
+
+// ---------- Le Don et sa famille ----------
+function donPanel() {
+  const d = donOf(s);
+  if (!d) {
+    const reg = s.regency;
+    const heir = reg ? (s.children ?? []).find((c) => c.id === reg.childId) : undefined;
+    return `<h3>La régence</h3>
+      <p class="flavor">Le Don n'est plus. ${reg ? `${esc(reg.regentName)} tient la famille en attendant que ${heir ? esc(heir.name) : "l'héritier"} ait ${F.ADULT_AGE} ans.` : ''}</p>
+      ${heir ? `<div class="kid">${portrait({ seed: heir.seed, size: 64, age: F.childAge(s, heir), sex: heir.sex, rank: 'child' })}<div><b>${esc(heir.name)}</b><small>${Math.floor(F.childAge(s, heir))} ans · prend la tête de la famille dans ${Math.max(0, Math.ceil((F.ADULT_AGE - F.childAge(s, heir)) * 6))} semaines</small></div></div>` : ''}
+      <p class="note">Pendant la régence, les talents du Don ne s'appliquent plus. Un régent peu loyal (sous 50) peut tenter de garder le pouvoir : surveille sa loyauté dans l'onglet Famille.</p>
+      ${dynastyBlock()}`;
+  }
+  const age = Math.floor(ageOf(s, d));
+  const lvl = d.level ?? 0;
+  const need = donXpForNext(lvl);
+  const stats = (Object.keys(DON_STATS) as DonStat[]).map((k) => {
+    const v = (d[k] ?? 5) as number;
+    return `<div class="dstat"><span title="${esc(DON_STATS[k].desc)}">${DON_STATS[k].name}</span><b class="num">${v}</b>
+      <button class="btn small" data-act="don-stat" data-id="${k}" ${d.points && v < STAT_CAP ? '' : 'disabled'} aria-label="+1 ${DON_STATS[k].name}">+1</button>
+      <small>${esc(DON_STATS[k].desc)}</small></div>`;
+  }).join('');
+  const branches = (Object.keys(BRANCHES) as Branch[]).map((b) => `
+    <div class="branch"><h4>${BRANCHES[b].name}</h4><p class="note">${BRANCHES[b].desc}</p>
+      ${TALENTS.filter((t) => t.branch === b).map((t) => {
+        const owned = d.talents?.includes(t.id);
+        const can = canLearn(d, t) && !!d.points;
+        return `<button class="talent ${owned ? 'owned' : can ? 'can' : ''}" data-act="talent" data-id="${t.id}" ${owned || !can ? 'disabled' : ''} aria-pressed="${!!owned}">
+          <span class="tier">${t.tier}</span><b>${t.name}</b><small>${t.desc}</small></button>`;
+      }).join('')}
+    </div>`).join('');
+  return `
+    <div class="don-card">
+      ${memberPortrait(d, 104)}
+      <div>
+        <h3>${esc(d.name)}</h3>
+        <p class="flavor">« ${esc(d.nickname)} » · ${age} ans · niveau ${lvl}${d.status !== 'actif' ? ` · <span class="danger">${d.status === 'blessé' ? 'blessé' : 'en prison'} (${d.statusWeeks} sem.)</span>` : ` · ${busyLabel(d)}`}</p>
+        <div class="xp wide" role="meter" aria-valuenow="${d.xp ?? 0}" aria-valuemin="0" aria-valuemax="${need}" aria-label="Expérience du Don"><i style="width:${((d.xp ?? 0) / need) * 100}%"></i></div>
+        <p class="note">${d.xp ?? 0}/${need} XP · ${d.points ? `<b class="clean">${d.points} point${d.points > 1 ? 's' : ''} à placer</b>` : 'chaque niveau donne 1 point'} · le Don gagne le double d'expérience sur le terrain.</p>
+      </div>
+    </div>
+    <div class="dstats">${stats}</div>
+    <div class="box-note">
+      <b>Au front.</b> Ajoute le Don à un assaut ou à un coup comme n'importe quel homme : +${2} par homme à ses côtés en assaut (+1 sur un coup), +2 respect si l'assaut réussit. Mais il est vu sur les lieux (+5 heat), peut être blessé, arrêté ou tué. S'il meurt sans héritier, la partie est finie.
+    </div>
+    <h4>Talents</h4>
+    <div class="branches">${branches}</div>
+    ${familyBlock()}
+    ${dynastyBlock()}`;
+}
+
+function familyBlock() {
+  const sp = s.spouse;
+  const c = s.courtship;
+  const kids = s.children ?? [];
+  const heir = F.currentHeir(s);
+  const meter = (v: number, label: string) => `<div class="mood-meter wide" role="meter" aria-valuenow="${v}" aria-valuemin="0" aria-valuemax="100" aria-label="${label}"><i style="width:${v}%;background:${v < 30 ? 'var(--oxblood-bright)' : v < 60 ? 'var(--brass)' : 'var(--good)'}"></i></div>`;
+  const sTraits = (ts: F.SpouseTraitId[]) => `<span class="traits">${ts.map((x) => `<span class="trait" title="${esc(F.SPOUSE_TRAITS[x].desc)}">${F.SPOUSE_TRAITS[x].name}<small>${F.SPOUSE_TRAITS[x].desc}</small></span>`).join('')}</span>`;
+  let spouseHtml = '';
+  if (sp) {
+    spouseHtml = `<div class="person">${portrait({ seed: sp.seed, size: 72, age: ageOf(s, sp), sex: 'f' })}<div class="grow">
+      <b>${esc(sp.name)}</b> <span class="muted">· ${esc(F.ORIGINS[sp.origin].label(s, sp.rivalId))} · ${Math.floor(ageOf(s, sp))} ans</span>
+      ${sTraits(sp.traits)}
+      <div class="aff">Affection ${sp.affection}/100 ${meter(sp.affection, 'Affection')}</div>
+      ${sp.pregnantWeeks ? `<p class="clean">Enceinte : naissance dans ${sp.pregnantWeeks} semaine${sp.pregnantWeeks > 1 ? 's' : ''}.</p>` : ''}
+      <div class="diplo">
+        <button class="btn small" data-act="spouse" data-id="soiree" ${sp.lastGift !== s.week && s.clean >= F.EVENING_COST ? '' : 'disabled'}>Soirée à l'opéra · ${money(F.EVENING_COST)} · +8</button>
+        <button class="btn small" data-act="spouse" data-id="bijou" ${sp.lastGift !== s.week && s.clean >= F.GIFT_COST ? '' : 'disabled'}>Collier de perles · ${money(F.GIFT_COST)} · +20</button>
+      </div>
+      <p class="note">Son affection baisse avec la heat, les blessures du Don et ton absence (sans attention depuis 4 semaines). Plus elle est haute, plus vous aurez vite des enfants. À 5, elle part.</p>
+    </div></div>`;
+  } else if (c) {
+    spouseHtml = `<div class="person">${portrait({ seed: c.seed, size: 72, age: ageOf(s, c), sex: 'f' })}<div class="grow">
+      <b>${esc(c.name)}</b> <span class="muted">· ${esc(F.ORIGINS[c.origin].label(s, c.rivalId))}</span>
+      ${sTraits(c.traits)}
+      <div class="aff">Elle se laisse séduire : ${c.progress}/100 ${meter(c.progress, 'Séduction')}</div>
+      <div class="diplo">
+        <button class="btn small" data-act="court" data-id="diner" ${c.lastDate !== s.week && s.clean >= F.DATE_COST ? '' : 'disabled'}>Dîner aux chandelles · ${money(F.DATE_COST)}</button>
+        <button class="btn small" data-act="court" data-id="cadeau" ${c.lastDate !== s.week && s.clean >= F.GIFT_COST ? '' : 'disabled'}>Un bijou · ${money(F.GIFT_COST)}</button>
+        <button class="btn small primary" data-act="propose" ${c.progress >= 100 && s.clean >= F.WEDDING_COST ? '' : 'disabled'}>Demander sa main · ${money(F.WEDDING_COST)}</button>
+        <button class="btn small danger" data-act="abandon">${ui.confirm === 'abandon' ? 'Confirmer' : 'Renoncer'}</button>
+      </div>
+      <p class="note">Une attention par semaine. Le Verbe du Don rend chaque rendez-vous plus efficace.${c.rivalId ? ' Ce mariage scellera une alliance avec sa famille.' : ''}</p>
+    </div></div>`;
+  } else {
+    spouseHtml = `<p class="empty">Le Don n'est pas marié. Les rencontres arrivent au fil des semaines : une chanteuse, une héritière, la fille d'un commerçant… ou celle d'un Don rival qui veut une alliance.</p>`;
+  }
+  const kidsHtml = kids.length
+    ? kids.map((k) => {
+        const a = F.childAge(s, k);
+        const member = k.memberId ? s.members.find((m) => m.id === k.memberId) : undefined;
+        const isHeir = heir?.id === k.id;
+        const sibling = k.generation < (s.generation ?? 1);
+        return `<div class="kid ${isHeir ? 'heir' : ''}">${member ? memberPortrait(member, 56) : portrait({ seed: k.seed, size: 56, age: a, sex: k.sex, rank: 'child' })}<div class="grow">
+          <b>${esc(k.name)}</b>${isHeir ? ' <span class="rank">Héritier' + (k.sex === 'f' ? 'e' : '') + '</span>' : ''}
+          <small>${sibling ? (k.sex === 'f' ? 'Sœur' : 'Frère') + ' du Don · ' : ''}${Math.floor(a)} ans · ${F.childStage(a)}${k.education.length ? ' · ' + k.education.map((e) => F.EDUCATION[e].name).join(', ') : ''}${member ? ' · dans les affaires (onglet Famille)' : a < F.ADULT_AGE ? ` · rejoint la famille dans ${Math.ceil((F.ADULT_AGE - a) * 6)} sem.` : ''}</small>
+          ${isHeir ? '' : `<button class="btn small" data-act="heir" data-id="${k.id}">Désigner comme héritier</button>`}
+        </div></div>`;
+      }).join('')
+    : `<p class="empty">Pas encore d'enfant. ${sp ? 'Avec de l’affection, ça viendra.' : 'Il faudra d’abord trouver une épouse.'} Sans héritier, la mort du Don met fin à la partie.</p>`;
+  return `
+    <h4>La famille du Don</h4>
+    ${spouseHtml}
+    <h4>Les enfants${heir ? ` · héritier : ${esc(heir.name.split(' ')[0])}` : ''}</h4>
+    <div class="kids">${kidsHtml}</div>
+    <p class="note">1 an passe toutes les 6 semaines. À ${F.ADULT_AGE} ans, l'enfant rejoint les affaires et gagne de l'expérience. Si le Don meurt, l'héritier prend sa place avec la moitié de ses talents ; s'il est encore mineur, un régent tient la famille.</p>`;
+}
+
+function dynastyBlock() {
+  const dy = s.dynasty ?? [];
+  if (!dy.length) return '';
+  return `<h4>La dynastie</h4><ul class="log">${dy.map((p) => `<li class="tone-neutral"><span class="w">S${p.fromWeek}–${p.toWeek}</span>${esc(p.name)} « ${esc(p.nickname)} » ${esc(p.cause)}</li>`).join('')}</ul>`;
 }
 
 // ---------- Famille ----------
@@ -727,10 +853,11 @@ function familyPanel() {
     ].filter(Boolean).join(', ');
     const lvl = m.level ?? 0;
     const need = xpForNext(lvl);
+    const fam = m.isDon || m.isChild;
     return `
     <div class="man">
-      <div class="who">
-        <b>${esc(m.name)}</b> <span class="nick">« ${esc(m.nickname)} »</span><span class="rank">${rankTitle(m)} · niv. ${lvl}</span>
+      <div class="who with-face">${memberPortrait(m, 46)}<div>
+        <b>${esc(m.name)}</b> <span class="nick">« ${esc(m.nickname)} »</span><span class="rank">${m.isDon ? (m.sex === 'f' ? 'La Donna' : 'Le Don') : m.isChild ? `${m.sex === 'f' ? 'Fille' : 'Fils'} du Don · niv. ${lvl}` : `${rankTitle(m)} · niv. ${lvl}`}</span>
         <div class="xp" role="meter" aria-valuenow="${m.xp ?? 0}" aria-valuemin="0" aria-valuemax="${need}" aria-label="Expérience de ${esc(m.nickname)}" title="${lvl >= 8 ? 'Niveau maximum' : `${m.xp ?? 0}/${need} XP avant le niveau ${lvl + 1}`}"><i style="width:${lvl >= 8 ? 100 : ((m.xp ?? 0) / need) * 100}%"></i></div>
         ${traitChips(m.traits, true)}
         <div class="attrs">
@@ -739,17 +866,18 @@ function familyPanel() {
           <span>Salaire <b class="dirty">${money(m.salary)}</b></span>
         </div>
         ${statusTxt}${m.status === 'actif' ? `<span class="muted" style="font-size:12px">${busyLabel(m)}</span>` : ''}
-      </div>
+      </div></div>
       <div></div>
       <div class="acts">
         <select data-act="assign-member" data-id="${m.id}" aria-label="Affectation de ${esc(m.nickname)}" ${m.status !== 'actif' ? 'disabled' : ''}>
           <option value="" ${!m.assignment ? 'selected' : ''}>Réserve</option>
           ${mine.map((d) => `<option value="${d.id}" ${m.assignment === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
         </select>
-        <button class="btn small" data-act="bonus" data-id="${m.id}" ${s.dirty >= 300 ? '' : 'disabled'}>Prime 300 $</button>
+        ${fam ? '' : `<button class="btn small" data-act="bonus" data-id="${m.id}" ${s.dirty >= 300 ? '' : 'disabled'}>Prime 300 $</button>`}
+        ${m.isDon ? `<button class="btn small" data-act="tab" data-id="don">Fiche du Don</button>` : ''}
         ${m.rank === 'soldat' ? `<button class="btn small" data-act="promote" data-id="${m.id}" ${canPromote ? '' : 'disabled'}>Faire capo · ${money(PROMOTE_COST)}</button>${missing ? `<span class="muted need">Il manque : ${missing}</span>` : ''}` : ''}
         ${m.status === 'prison' ? `<button class="btn small" data-act="free" data-id="${m.id}" ${s.favors ? '' : 'disabled'}>Faire libérer · 1 faveur</button>` : ''}
-        <button class="btn small danger" data-act="fire" data-id="${m.id}">${ui.confirm === `fire-${m.id}` ? 'Confirmer le renvoi' : 'Renvoyer'}</button>
+        ${fam ? '' : `<button class="btn small danger" data-act="fire" data-id="${m.id}">${ui.confirm === `fire-${m.id}` ? 'Confirmer le renvoi' : 'Renvoyer'}</button>`}
       </div>
     </div>`;
   };
@@ -761,7 +889,7 @@ function familyPanel() {
     <div class="rows">${s.recruits.map((r) => {
       const cost = recruitCost(s, r);
       return `
-      <div class="row recruit"><div class="grow">${esc(r.name)} « ${esc(r.nickname)} »${r.level ? ` <span class="rank">${r.level >= 3 ? 'Homme de confiance' : 'Soldat'} · niv. ${r.level}</span>` : ''}
+      <div class="row recruit">${portrait({ seed: seedOf(r.name, r.id), size: 40, age: 22 + (r.level ?? 0) * 4, rank: 'soldat' })}<div class="grow">${esc(r.name)} « ${esc(r.nickname)} »${r.level ? ` <span class="rank">${r.level >= 3 ? 'Homme de confiance' : 'Soldat'} · niv. ${r.level}</span>` : ''}
         <small>Force ${r.force} · Discrétion ${r.discretion} · Loyauté ${r.loyalty} · Salaire ${money(r.salary)}</small>
         ${traitChips(r.traits, true)}</div>
         <button class="btn small" data-act="hire" data-id="${r.id}" ${s.dirty + s.clean >= cost ? '' : 'disabled'} title="Payé en sale d'abord, puis en propre">Recruter ${money(cost)}${cost < r.cost ? ' (recruteur)' : ''}</button></div>`;
@@ -819,8 +947,9 @@ function rivalsPanel() {
       if (!r.alive) return `<div class="rival"><div class="rival-name" style="color:${r.color}">${esc(r.name)} <span class="muted">· éliminée</span></div><div class="boss">${esc(r.boss)} a quitté la ville.</div></div>`;
       const cd = r.talkCooldown ? ` (${r.talkCooldown} sem.)` : '';
       return `<div class="rival">
+        <div class="with-face">${portrait({ seed: seedOf(r.boss), size: 52, age: r.id === 'castellano' ? 61 : r.id === 'kilbride' ? 44 : 52, rank: 'rival', scars: r.id === 'kilbride' ? 1 : 0 })}<div>
         <div class="rival-name" style="color:${r.color}">${esc(r.name)}</div>
-        <div class="boss">${esc(r.boss)}</div>
+        <div class="boss">${esc(r.boss)}</div></div></div>
         ${(r.traits ?? []).length ? `<span class="traits">${(r.traits ?? []).map((x) => `<span class="trait don" title="${esc(DON_TRAITS[x].desc)}">${esc(DON_TRAITS[x].name)}<small>${esc(DON_TRAITS[x].desc)}</small></span>`).join('')}</span>` : ''}
         <div class="facts" style="margin-top:6px">
           <span>Force <b>${Math.round(r.strength)}</b></span>
@@ -986,6 +1115,13 @@ app.addEventListener('click', (ev) => {
     case 'break': if (confirmed(`break-${id}`)) run(D.breakAlliance(s, id)); return;
     case 'war': if (confirmed(`war-${id}`)) run(D.declareWar(s, id)); return;
     case 'peace': return run(D.makePeace(s, id));
+    case 'don-stat': return run(spendPoint(s, id as DonStat));
+    case 'talent': return run(learnTalent(s, id as TalentId));
+    case 'spouse': return run(F.spouseAttention(s, id as 'soiree' | 'bijou'));
+    case 'court': return run(F.dateCourtship(s, id as 'diner' | 'cadeau'));
+    case 'propose': return run(F.propose(s));
+    case 'abandon': if (confirmed('abandon')) run(F.abandonCourtship(s)); return;
+    case 'heir': return run(F.setHeir(s, Number(id)));
     case 'hire': return run(E.hire(s, Number(id)));
     case 'fire': if (confirmed(`fire-${id}`)) run(E.fire(s, Number(id))); return;
     case 'promote': return run(E.promote(s, Number(id)));
@@ -1007,6 +1143,8 @@ app.addEventListener('click', (ev) => {
       if (name && name !== s.familyName) {
         s.familyName = name.startsWith('Famille') ? name : `Famille ${name}`;
         s.log.forEach((e) => (e.text = e.text.replace(/^Famille \S+/, s.familyName)));
+        const don = donOf(s);
+        if (don && s.week === 1) don.name = `${don.name.split(' ')[0]} ${s.familyName.replace(/^Famille /, '')}`;
       }
       ui.showIntro = false;
       ui.playing = true;

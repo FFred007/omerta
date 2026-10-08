@@ -1,5 +1,7 @@
 import { checkEnd } from './engine';
 import { declareWar, playerForce } from './diplomacy';
+import { donOf } from './don';
+import { ORIGINS, SPOUSE_TRAITS, makeCandidate, resolveFamilyEffect, startCourtship, type SpouseOrigin } from './family';
 import { activeMembers, chance, clamp, district, log, neighbors, news, nextId, owned, pick, rival, stockTotal, storageCap } from './state';
 import type { GameState, PendingEvent, Shop } from './types';
 
@@ -76,9 +78,9 @@ const EVENTS: EventDef[] = [
     },
   },
   {
-    key: 'indic', weight: 2, when: (s) => activeMembers(s).length >= 3 && s.heat > 30,
+    key: 'indic', weight: 2, when: (s) => activeMembers(s).filter((m) => !m.isDon && !m.isChild).length >= 3 && s.heat > 30,
     build: (s) => {
-      const m = [...activeMembers(s)].sort((a, b) => a.loyalty - b.loyalty)[0];
+      const m = [...activeMembers(s)].filter((x) => !x.isDon && !x.isChild).sort((a, b) => a.loyalty - b.loyalty)[0];
       return {
         key: 'indic',
         title: 'Un rat dans la maison',
@@ -235,6 +237,66 @@ const EVENTS: EventDef[] = [
       };
     },
   },
+  // ---------- Famille du Don ----------
+  {
+    key: 'rencontre', weight: 3,
+    when: (s) => s.week >= 3 && !s.spouse && !s.courtship && !!donOf(s),
+    build: (s) => {
+      const origin = pick<SpouseOrigin>(['chanteuse', 'banquier', 'commercante']);
+      const c = makeCandidate(s, origin);
+      s.pendingCandidate = c;
+      const scene: Record<string, string> = {
+        chanteuse: `Au club de Southside, la chanteuse ne quitte pas le Don des yeux pendant tout son tour de chant.`,
+        banquier: `Au gala de l'hôpital, l'héritière d'un banquier du Loop demande au Don de l'accompagner sur la piste.`,
+        commercante: `La fille du marchand de journaux de Little Sicily apporte elle-même le Herald au Don chaque matin.`,
+      };
+      return {
+        key: 'rencontre',
+        title: `Une rencontre : ${c.name}`,
+        text: `${scene[origin]} ${c.name}, ${ORIGINS[origin].label(s)}. ${c.traits.map((t) => SPOUSE_TRAITS[t].name).join(', ')}.`,
+        choices: [
+          { label: 'La courtiser', hint: 'Dîners et cadeaux dans l’onglet Le Don, puis demande en mariage', effect: 'fam_court' },
+          { label: 'Pas maintenant', hint: 'Les affaires d’abord', effect: 'fam_skip' },
+        ],
+      };
+    },
+  },
+  {
+    key: 'promise', weight: 2,
+    when: (s) => !s.spouse && !s.courtship && !!donOf(s) && s.rivals.some((r) => r.alive && !r.war && (r.alliance || r.relation >= 15)),
+    build: (s) => {
+      const r = pick(s.rivals.filter((x) => x.alive && !x.war && (x.alliance || x.relation >= 15)));
+      const c = makeCandidate(s, 'rivale', r.id);
+      s.pendingCandidate = c;
+      return {
+        key: 'promise',
+        title: `${r.boss} propose sa fille`,
+        text: `« Nos familles ont tout à gagner à n'en faire qu'une. » ${r.boss} propose la main de ${c.name}. Un mariage scellerait une alliance solide. ${c.traits.map((t) => SPOUSE_TRAITS[t].name).join(', ')}.`,
+        data: { rival: r.id },
+        choices: [
+          { label: 'Accepter les fiançailles', hint: 'La cour commence à 60 sur 100 ; le mariage scellera l’alliance', effect: 'fam_court' },
+          { label: 'Décliner poliment', hint: 'Relation −5', effect: 'fam_decline' },
+        ],
+      };
+    },
+  },
+  {
+    key: 'menace', weight: 2,
+    when: (s) => !!s.spouse && s.rivals.some((r) => r.alive && r.relation <= -40),
+    build: (s) => {
+      const r = pick(s.rivals.filter((x) => x.alive && x.relation <= -40));
+      return {
+        key: 'menace',
+        title: 'Une voiture devant chez toi',
+        text: `Depuis trois jours, une Packard noire stationne devant la maison du Don. ${s.spouse!.name} a reconnu un homme de ${r.name}.`,
+        data: { rival: r.id },
+        choices: [
+          { label: 'Doubler la garde', hint: '−600 propre · ta femme se sent protégée (+5 affection)', effect: 'fam_guard', disabled: s.clean < 600 },
+          { label: 'Faire comme si de rien n’était', hint: 'Une chance sur deux qu’ils passent à l’acte', effect: 'fam_ignore' },
+        ],
+      };
+    },
+  },
   // ---------- Diplomatie ----------
   {
     key: 'ultimatum', weight: 3,
@@ -297,7 +359,25 @@ export function resolveEvent(s: GameState, effect: string) {
   const respect = (n: number) => (s.respect = clamp(s.respect + n, 0, 150));
   const allLoyalty = (n: number) => activeMembers(s).forEach((m) => (m.loyalty = clamp(m.loyalty + n, 0, 100)));
 
+  if (resolveFamilyEffect(s, effect, ev)) {
+    s.pendingEvent = null;
+    checkEnd(s);
+    return;
+  }
   switch (effect) {
+    case 'fam_court': if (s.pendingCandidate) startCourtship(s, s.pendingCandidate); s.pendingCandidate = null; break;
+    case 'fam_skip': s.pendingCandidate = null; break;
+    case 'fam_decline': { s.pendingCandidate = null; const r = rival(s, String(ev.data?.rival)); if (r) r.relation = clamp(r.relation - 5, -100, 100); break; }
+    case 'fam_guard': s.clean -= 600; if (s.spouse) s.spouse.affection = clamp(s.spouse.affection + 5, 0, 100); log(s, 'good', 'Deux hommes armés montent la garde devant la maison du Don.'); break;
+    case 'fam_ignore':
+      if (chance(0.5) && s.spouse) {
+        const ransom = Math.min(s.dirty, 2000);
+        s.dirty -= ransom;
+        s.spouse.affection = clamp(s.spouse.affection - 25, 0, 100);
+        log(s, 'bad', `${s.spouse.name} a été enlevée. Le Don paie ${ransom} $ de rançon pour la récupérer (−25 affection).`);
+        news(s, 5, 'Enlèvement en plein jour', `La femme d'un homme d'affaires de Little Sicily enlevée devant chez elle, puis relâchée contre rançon.`);
+      } else log(s, 'neutral', 'La Packard noire a disparu. Fausse alerte… pour cette fois.');
+      break;
     case 'j_pay': s.clean -= 500; heat(-5); log(s, 'neutral', "Le journaliste a trouvé d'autres sujets."); break;
     case 'j_scare': respect(3); heat(6); log(s, 'neutral', 'Le journaliste a compris le message.'); break;
     case 'j_ignore': heat(10); log(s, 'police', "L'article fait la une. Le préfet est furieux (+10 heat)."); break;

@@ -40,6 +40,9 @@ Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérive
 - **Territoire.** 9 quartiers en grille 3×3, attaques sur les voisins. Puissance = force des hommes (+2 par capo) + respect/20, contre la défense, ±25 % d'aléa de chaque côté.
 - **Heat.** Monte avec les commerces illégaux, les assauts, les coups et le cash stocké. Au-dessus de 85, les fédéraux peuvent arrêter le Don, sauf juge acheté.
 - **Hommes.** Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat la plus utilisée ; tous les deux niveaux, un trait (Tireur d'élite, Gueule cassée, Fantôme, Comptable, Chauffeur, Négociateur…). Rangs : Recrue, Soldat, Homme de confiance, Vétéran, Capo. Les 4 recrues sont renouvelées chaque semaine, avec leurs traits et parfois un défaut (Bavard, Cupide, Ivrogne, Trouillard). Les Dons rivaux ont aussi des traits, et en gagnent avec leurs victoires (Aguerri) ou leurs défaites contre toi (Revanchard).
+- **Le Don.** Ton personnage : Poigne, Ombre, Verbe, Flair, expérience double, et des points à placer en stats ou en talents (Boucher, Renard, Parrain : 5 talents chacun). Il peut monter au front (assauts, coups) : +2 par homme à ses côtés, +2 respect, mais +5 heat (vu sur les lieux), blessures, cicatrices, arrestation ou mort.
+- **La famille du Don.** Rencontres (chanteuse, héritière, fille de commerçant, fille d'un Don rival qui scelle une alliance), cour, mariage, épouse avec traits et affection, grossesse, naissances, éducation à 6 et 12 ans, entrée dans les affaires à 16 ans. 1 an = 6 semaines. Si le Don meurt ou tombe pour 20 ans, l'héritier reprend avec la moitié de ses talents ; s'il est mineur, un régent tient la famille ; sans enfant, la partie s'achève.
+- **Portraits.** Générés en SVG (gravure de journal), ils évoluent avec l'âge, les cicatrices et le rang.
 - **Rang.** Petite bande → Famille de quartier → Famille établie → Grande famille → Capo dei Capi, selon le respect.
 - **Victoire :** 9 quartiers, ou 7 quartiers et 100 de respect. **Défaite :** arrestation, plus aucun quartier, ou faillite sans hommes.
 
@@ -58,6 +61,9 @@ src/
   events.ts     événements à choix
   street.ts     petites nouvelles de rue (cosmétique)
   traits.ts     traits, expérience et niveaux des hommes ; traits des Dons
+  don.ts        le Don : stats, talents, points, vieillissement
+  family.ts     épouse, cour, mariage, enfants, héritier, succession, régence
+  portraits.ts  portraits SVG générés
   fx.ts         effets visuels : camions, fusillades, compteurs, une du journal
   ui.ts         rendu et interactions
   style.css     thème feutre, laiton et sang de bœuf

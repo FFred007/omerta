@@ -5,6 +5,7 @@ import {
 } from './state';
 import type { GameState, Job, JobStat, Member, RivalFamily } from './types';
 import { donHas, has } from './traits';
+import { DON_SEEN_HEAT, donHasTalent } from './don';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -15,8 +16,19 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString('fr-FR')}`;
 export function teamSkill(s: GameState, job: Job, ids = job.team) {
   return s.members
     .filter((m) => ids.includes(m.id))
-    .reduce((t, m) => t + (job.stat === 'force' ? m.force : m.discretion) + (m.rank === 'capo' ? 2 : 0) + traitBonus(m, job.stat), 0);
+    .reduce((t, m) => t + (job.stat === 'force' ? m.force : m.discretion) + (m.rank === 'capo' ? 2 : 0) + traitBonus(m, job.stat), 0)
+    + donMorale(s, ids);
 }
+
+/** Le Don sur le coup : +1 par homme à ses côtés */
+export function donMorale(s: GameState, ids: number[]) {
+  return s.members.some((m) => m.isDon && ids.includes(m.id)) ? ids.length - 1 : 0;
+}
+
+/** Heat si le coup rate (Personne ne parle : ÷2 sur les coups de force) */
+export const jobFailHeat = (s: GameState, j: Job) => (j.stat === 'force' && donHasTalent(s, 'b_silence') ? Math.ceil(j.failHeat / 2) : j.failHeat);
+/** Heat si le Don est vu sur le coup */
+export const donJobHeat = (s: GameState, ids: number[]) => (s.members.some((m) => m.isDon && ids.includes(m.id)) && !donHasTalent(s, 'r_invisible') ? DON_SEEN_HEAT : 0);
 
 /** Bonus de traits sur un coup */
 export function traitBonus(m: Member, stat: JobStat) {
@@ -195,10 +207,13 @@ export function resolveJobs(s: GameState) {
     const b = job.difficulty * roll();
     const dice = `(${odds} % · ${job.stat} ${skill} → ${a.toFixed(1)} contre ${job.difficulty} → ${b.toFixed(1)})`;
     const r = job.rivalId ? s.rivals.find((x) => x.id === job.rivalId) : undefined;
+    const donThere = men.some((m) => m.isDon);
+    s.heat = clamp(s.heat + donJobHeat(s, men.map((m) => m.id)), 0, 100);
     if (r && job.relationHit) r.relation = clamp(r.relation - job.relationHit * (a > b ? 1 : 0.5) * (donHas(r, 'rancunier') ? 1.5 : 1), -100, 100);
 
     if (a > b) {
       s.stats.jobsDone++;
+      if (donThere) s.respect = clamp(s.respect + 1, 0, 150);
       fx(s, 'job');
       const w = job.reward;
       const gains: string[] = [];
@@ -229,9 +244,9 @@ export function resolveJobs(s: GameState) {
       if (job.key === 'banque') news(s, 5, 'Braquage spectaculaire en plein jour', 'La Corrano Savings Bank délestée de sa paie. Aucun suspect, aucun témoin.');
       if (job.key === 'boxe') news(s, 2, 'Kid Malone au tapis au 4e round', 'Stupeur au Coliseum. Les parieurs crient au scandale.');
     } else {
-      s.heat = clamp(s.heat + job.failHeat, 0, 100);
+      s.heat = clamp(s.heat + jobFailHeat(s, job), 0, 100);
       fx(s, 'jobfail');
-      log(s, 'bad', `Coup raté : ${job.title} ${dice}. +${job.failHeat} heat.`);
+      log(s, 'bad', `Coup raté : ${job.title} ${dice}. +${jobFailHeat(s, job)} heat.`);
       consequences(s, men, job.danger, job.stat);
       men.filter((m) => s.members.includes(m)).forEach((m) => award(s, m, 1, job.stat));
       if (job.key === 'banque') news(s, 4, 'Braquage manqué à la Savings Bank', 'Échange de coups de feu devant la banque. Les malfrats s’enfuient les mains vides.');
@@ -248,6 +263,7 @@ function consequences(s: GameState, men: Member[], danger: number, stat: JobStat
       m.status = 'prison';
       m.statusWeeks = randInt(2, 5);
       if (s.judge) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
+      if (donHasTalent(s, 'r_avocat')) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
       log(s, 'police', `${m.nickname} se fait pincer (${m.statusWeeks} sem. de prison).`);
     } else if (chance(stat === 'force' ? danger * 0.6 : danger * 0.3)) {
       m.status = 'blessé';

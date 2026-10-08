@@ -48,7 +48,7 @@ function botTurn(s: GameState) {
   const targets = s.districts.filter((d) => isAttackable(s, d)).filter((d) => !(d.owner !== 'neutral' && s.rivals.find((r) => r.id === d.owner)?.alliance)).sort((a, b) => defenseOf(s, a) - defenseOf(s, b));
   if (targets.length) {
     const t = targets[0];
-    const pool = activeMembers(s).filter((m) => !(m.fatigue ?? 0)).filter((m) => !m.assignment || membersIn(s, m.assignment).length > 1).sort((a, b) => b.force - a.force);
+    const pool = activeMembers(s).filter((m) => !m.isDon).filter((m) => !(m.fatigue ?? 0)).filter((m) => !m.assignment || membersIn(s, m.assignment).length > 1).sort((a, b) => b.force - a.force);
     const chosen: number[] = [];
     for (const m of pool) {
       chosen.push(m.id);
@@ -58,7 +58,7 @@ function botTurn(s: GameState) {
   }
   if (!SMART || ARGS.includes('--nojobs')) return;
   // 7. Un coup avec les hommes de réserve libres
-  const free = activeMembers(s).filter((m) => (!m.assignment || membersIn(s, m.assignment).length > 1) && !committedToAttack(s, m.id) && !(m.fatigue ?? 0));
+  const free = activeMembers(s).filter((m) => !m.isDon).filter((m) => (!m.assignment || membersIn(s, m.assignment).length > 1) && !committedToAttack(s, m.id) && !(m.fatigue ?? 0));
   for (const job of s.jobs) {
     const ids = free.filter((m) => !s.jobs.some((j) => j.team.includes(m.id))).slice(0, Math.max(job.minMen, 2)).map((m) => m.id);
     if (ids.length >= job.minMen && jobChance(s, job, ids) >= 0.75 && job.danger < 0.5) setJobTeam(s, job.id, ids);

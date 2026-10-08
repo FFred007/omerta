@@ -5,6 +5,8 @@ import {
 import type { District, GameState, Good, Member, Owner, Recruit, LogTone, Shop } from './types';
 import { TRAITS, donHas, donStartTraits, familyCount, familyHas, gainXp, has, rankTitle, rollRecruitTraits } from './traits';
 import type { JobStat } from './types';
+import { DON_MORALE, donHasTalent, donXpForNext, flairBonus, makeDon } from './don';
+import { spouseHas } from './family';
 
 export const SAVE_KEY = 'omerta-save-v2';
 export const SAVE_VERSION = 2;
@@ -132,6 +134,9 @@ export function newGame(familyName = 'Famille Moretti'): GameState {
     makeMember(s, { force: 5, discretion: 5, loyalty: 60, salary: 220, traits: [] }),
     makeMember(s, { force: 4, discretion: 6, loyalty: 65, salary: 210, traits: ['chauffeur'] }),
   );
+  s.members.unshift(makeDon(nextId(s), randInt(1, 1e9)));
+  s.children = [];
+  s.generation = 1;
   s.recruits = [makeRecruit(s), makeRecruit(s), makeRecruit(s), makeRecruit(s)];
   log(s, 'neutral', `${familyName} : ton oncle est tombé pour fraude fiscale. Little Sicily est à toi. Fais-en un empire.`);
   return s;
@@ -151,9 +156,20 @@ export function load(): GameState | null {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw) as GameState;
-    return s.version === SAVE_VERSION ? s : null;
+    if (s.version !== SAVE_VERSION) return null;
+    migrate(s);
+    return s;
   } catch {
     return null;
+  }
+}
+
+/** Anciennes sauvegardes : on ajoute le Don et la famille sans casser la partie */
+export function migrate(s: GameState) {
+  s.children ??= [];
+  s.generation ??= 1;
+  if (s.status === 'playing' && !s.members.some((m) => m.isDon) && !s.regency) {
+    s.members.unshift(makeDon(nextId(s), randInt(1, 1e9)));
   }
 }
 
@@ -181,6 +197,18 @@ export function fx(s: GameState, kind: import('./types').FxKind, d?: string) {
 
 /** Expérience + annonce des montées de niveau dans le journal */
 export function award(s: GameState, m: Member, amount: number, stat: JobStat) {
+  if (m.isDon) {
+    m.xp = (m.xp ?? 0) + amount * 2;
+    m.level ??= 0;
+    while (m.xp >= donXpForNext(m.level)) {
+      m.xp -= donXpForNext(m.level);
+      m.level += 1;
+      m.points = (m.points ?? 0) + 1;
+      log(s, 'good', `Le Don passe niveau ${m.level} : 1 point à placer (onglet Le Don).`);
+    }
+    return;
+  }
+  if (m.isChild && donHasTalent(s, 'p_famille')) amount = Math.ceil(amount * 1.5);
   for (const up of gainXp(m, amount, stat)) {
     const t = up.trait ? `, nouveau trait « ${TRAITS[up.trait].name} »` : '';
     log(s, 'good', `${m.nickname} passe niveau ${m.level} (${rankTitle(m)}) : +1 ${up.stat === 'force' ? 'force' : 'discrétion'}${t}.`);
@@ -237,7 +265,15 @@ export function defenseOf(s: GameState, d: District): number {
 export function attackPower(s: GameState, memberIds: number[]): number {
   const men = s.members.filter((m) => memberIds.includes(m.id));
   const base = men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'tireur') ? 3 : 0) + (has(m, 'tetebrulee') ? 3 : 0) - (has(m, 'trouillard') ? 2 : 0), 0);
-  return Math.max(0, Math.round(base + s.respect / 20));
+  return Math.max(0, Math.round(base + donPresence(s, men) + s.respect / 20));
+}
+
+/** Le patron est là : ses hommes se battent mieux. Main de fer : sa Poigne compte double. */
+export function donPresence(s: GameState, men: Member[]) {
+  const don = men.find((m) => m.isDon);
+  if (!don) return 0;
+  const morale = (men.length - 1) * (donHasTalent(s, 'b_reputation') ? DON_MORALE + 1 : DON_MORALE);
+  return morale + (donHasTalent(s, 'b_maindefer') ? don.force : 0);
 }
 
 /** Aléa des combats : chaque camp tire un multiplicateur uniforme dans [0,75 ; 1,25] */
@@ -348,6 +384,7 @@ export function projection(s: GameState) {
   let fixed = 0;
   let booze = 0;
   const plan = salesPlan(s);
+  const flair = flairBonus(s);
   for (const d of owned(s)) {
     const mult = capoBonus(s, d) * ((d.unrest ?? 0) > 0 ? 0.5 : 1);
     const r = s.lowProfile ? 0 : racketOf(d);
@@ -366,12 +403,13 @@ export function projection(s: GameState) {
     const sales = plan.outlets.filter((o) => o.districtId === d.id).reduce((t, o) => t + o.revenue, 0);
     racket += Math.round(r * mult);
     fixed += Math.round(f * mult);
-    booze += Math.round(sales * mult);
+    booze += Math.round(sales * mult * (1 + flair));
   }
   dirtyIn = racket + fixed + booze;
   if (s.councilman) launderCap = Math.round(launderCap * 1.25);
-  launderCap = Math.round(launderCap * (1 + 0.1 * familyCount(s, 'comptable')));
-  heatGain += familyCount(s, 'bavard');
+  launderCap = Math.round(launderCap * (1 + 0.1 * familyCount(s, 'comptable') + (spouseHas(s, 'affaires') ? 0.1 : 0)));
+  heatGain += familyCount(s, 'bavard') - (spouseHas(s, 'pieuse') ? 1 : 0);
+  if (spouseHas(s, 'fortune')) cleanIn += 300;
   const salaries = activeMembers(s).reduce((t, m) => t + m.salary, 0) + s.members.filter((m) => m.status !== 'actif').reduce((t, m) => t + Math.round(m.salary / 2), 0);
   const bribes =
     owned(s).filter((d) => d.bribedCop).length * 300 + (s.judge ? 800 : 0) + (s.councilman ? 1200 : 0);

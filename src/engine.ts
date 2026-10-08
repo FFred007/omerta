@@ -1,4 +1,4 @@
-import { BUSINESSES, COUNCIL_BRIBE, DIRTY_STASH_LIMIT, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE_COST } from './data';
+import { BUSINESSES, COUNCIL_BRIBE, DIRTY_STASH_LIMIT, JUDGE_BRIBE, PROMOTE_COST } from './data';
 import { rollEvent } from './events';
 import { marketTick, resolveShipments } from './booze';
 import { publishHerald, relationsTick } from './diplomacy';
@@ -10,6 +10,9 @@ import {
 } from './state';
 import { GOOD_ORDER, GOODS } from './data';
 import { donHas, familyCount, has } from './traits';
+import { DON_SEEN_HEAT, donHasTalent, launderFee } from './don';
+import { familyTick, offendInLaws, spouseHas, succession } from './family';
+import { donJobHeat, jobFailHeat } from './jobs';
 import type { BusinessKind, District, GameState, LogEntry, Member, RivalFamily } from './types';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -93,6 +96,7 @@ export function hire(s: GameState, recruitId: number): ActionResult {
 export function fire(s: GameState, memberId: number): ActionResult {
   const m = s.members.find((x) => x.id === memberId);
   if (!m) return fail('Introuvable.');
+  if (m.isDon || m.isChild) return fail('On ne renvoie pas la famille.');
   s.members = s.members.filter((x) => x.id !== memberId);
   s.orders.forEach((o) => (o.memberIds = o.memberIds.filter((id) => id !== memberId)));
   s.orders = s.orders.filter((o) => o.memberIds.length);
@@ -198,6 +202,7 @@ export function heatForecast(s: GameState) {
   // projection() arrondit la somme : on reporte l'écart d'arrondi sur la dernière ligne pour que le total soit exact
   const rounded = Math.round(raw);
   if (lines.length && rounded !== raw) lines[lines.length - 1].value += rounded - raw;
+  if (spouseHas(s, 'pieuse')) lines.push({ label: 'Ta femme, pieuse, rassure le curé', value: -1, sure: true });
   const chatter = familyCount(s, 'bavard');
   if (chatter) lines.push({ label: `Bavard${chatter > 1 ? 's' : ''} dans la famille`, value: chatter, sure: true });
   lines.push({ label: 'Retombée naturelle', value: -HEAT_DECAY, sure: true });
@@ -210,11 +215,14 @@ export function heatForecast(s: GameState) {
   for (const o of s.orders) {
     const d = district(s, o.districtId);
     const hot = s.members.filter((m) => o.memberIds.includes(m.id) && has(m, 'tetebrulee')).length * 2;
-    lines.push({ label: `Assaut sur ${d.name}${hot ? ' (têtes brûlées)' : ''}`, value: 5 + d.police * 2 + hot, sure: false });
+    const seen = s.members.some((m) => m.isDon && o.memberIds.includes(m.id)) && !donHasTalent(s, 'r_invisible') ? DON_SEEN_HEAT : 0;
+    lines.push({ label: `Assaut sur ${d.name}${hot ? ' (têtes brûlées)' : ''}${seen ? ' (le Don est vu)' : ''}`, value: 5 + d.police * 2 + hot + seen, sure: false });
   }
   for (const j of s.jobs.filter((x) => x.team.length >= x.minMen)) {
     const win = j.reward.heat ?? 0;
-    lines.push({ label: `Coup « ${j.title} » : ${win ? `${win > 0 ? '+' : ''}${win} si réussi, ` : ''}+${j.failHeat} si raté`, value: Math.max(win, j.failHeat), sure: false });
+    const seen = donJobHeat(s, j.team);
+    const fh = jobFailHeat(s, j);
+    lines.push({ label: `Coup « ${j.title} » : ${win ? `${win > 0 ? '+' : ''}${win} si réussi, ` : ''}+${fh} si raté${seen ? `, +${seen} car le Don est vu` : ''}`, value: Math.max(win, fh) + seen, sure: false });
   }
   if (s.shipments.length) lines.push({ label: `Livraison interceptée par les Prohis (${s.shipments.length} camion${s.shipments.length > 1 ? 's' : ''})`, value: 4, sure: false });
   return { lines, sure: Math.round(sure * 10) / 10 };
@@ -254,6 +262,7 @@ export function endTurn(s: GameState): LogEntry[] {
   relationsTick(s);
   shopsTick(s);
   crewTurn(s, raidedDistricts);
+  familyTick(s);
   donArrestCheck(s);
   checkEnd(s);
   publishHerald(s);
@@ -273,7 +282,7 @@ export function endTurn(s: GameState): LogEntry[] {
   s.recruits = [];
   for (let i = 0; i < RECRUITS_PER_WEEK; i++) s.recruits.push(makeRecruit(s));
 
-  if (s.status === 'playing' && chance(0.35)) s.pendingEvent = rollEvent(s);
+  if (s.status === 'playing' && !s.pendingEvent && chance(0.35)) s.pendingEvent = rollEvent(s);
   return s.lastReport;
 }
 
@@ -294,7 +303,10 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
     const prevOwner = d.owner;
     const r = prevOwner !== 'neutral' ? rival(s, prevOwner) : undefined;
     const target = r ? `${d.name} (${r.name})` : d.name;
-    s.heat = clamp(s.heat + 5 + d.police * 2 + men.filter((m) => has(m, 'tetebrulee')).length * 2, 0, 100);
+    const donThere = men.some((m) => m.isDon);
+    const seen = donThere && !donHasTalent(s, 'r_invisible') ? DON_SEEN_HEAT : 0;
+    s.heat = clamp(s.heat + 5 + d.police * 2 + men.filter((m) => has(m, 'tetebrulee')).length * 2 + seen, 0, 100);
+    if (r) offendInLaws(s, r.id);
     men.forEach((m) => (m.fatigue = 2));
     fx(s, 'battle', d.id);
 
@@ -313,7 +325,8 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
           log(s, 'bad', `${r.boss} devient Revanchard : il te visera en priorité.`);
         }
       }
-      s.respect = clamp(s.respect + (r ? (r.war ? 7 : 5) : 3), 0, 150);
+      s.respect = clamp(s.respect + (r ? (r.war ? 7 : 5) : 3) + (donThere ? 2 : 0), 0, 150);
+      if (donThere) news(s, 5, `Le Don en personne à ${d.name}`, `Témoins formels : le chef de la ${s.familyName} menait lui-même ses hommes, un pistolet à la main.`);
       onConquest(s, d.id);
       news(s, r ? 5 : 4, `${d.name} change de mains`, r
         ? `Nuit de fusillades : les hommes de ${r.boss} chassés par la ${s.familyName}.`
@@ -344,16 +357,40 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
 
 function casualties(s: GameState, men: Member[], pInjured: number, pKilled: number) {
   for (const m of men) {
-    if (chance(pKilled)) {
-      s.members = s.members.filter((x) => x.id !== m.id);
-      activeMembers(s).forEach((o) => (o.loyalty = clamp(o.loyalty - 2, 0, 100)));
-      log(s, 'bad', `${m.name} « ${m.nickname} » est tombé. La famille porte le deuil.`);
+    if (!s.members.includes(m)) continue;
+    // ses hommes protègent le Don : il risque moins que les autres
+    const kill = m.isDon ? pKilled * 0.6 * (donHasTalent(s, 'b_increvable') ? 0.5 : 1) : pKilled;
+    if (chance(kill)) {
+      killMember(s, m);
     } else if (chance(pInjured)) {
       m.status = 'blessé';
       m.statusWeeks = randInt(2, 3);
-      log(s, 'bad', `${m.nickname} est blessé (${m.statusWeeks} sem.).`);
+      if (m.isDon) {
+        m.scars = (m.scars ?? 0) + 1;
+        if (donHasTalent(s, 'b_increvable')) m.statusWeeks = 1;
+        log(s, 'bad', `Le Don est blessé (${m.statusWeeks} sem.). Une cicatrice de plus.`);
+      } else log(s, 'bad', `${m.nickname} est blessé (${m.statusWeeks} sem.).`);
     }
   }
+}
+
+/** Mort d'un membre : le Don déclenche la succession, un enfant brise le cœur de sa mère */
+export function killMember(s: GameState, m: Member, how = 'est tombé sous les balles') {
+  if (m.isDon) {
+    succession(s, m, `${how}`);
+    return;
+  }
+  s.members = s.members.filter((x) => x.id !== m.id);
+  s.orders.forEach((o) => (o.memberIds = o.memberIds.filter((id) => id !== m.id)));
+  s.jobs.forEach((j) => (j.team = j.team.filter((id) => id !== m.id)));
+  activeMembers(s).forEach((o) => (o.loyalty = clamp(o.loyalty - 2, 0, 100)));
+  if (m.isChild) {
+    s.children = (s.children ?? []).filter((c) => c.memberId !== m.id);
+    if (s.heirId && !s.children.some((c) => c.id === s.heirId)) s.heirId = null;
+    if (s.spouse) s.spouse.affection = clamp(s.spouse.affection - 40, 0, 100);
+    log(s, 'bad', `${m.name}, l'enfant du Don, est tombé. La famille ne s'en remettra jamais.`);
+    news(s, 5, 'Deuil chez le Don', `${m.name} a été tué. On murmure que la vengeance sera terrible.`);
+  } else log(s, 'bad', `${m.name} « ${m.nickname} » est tombé. La famille porte le deuil.`);
 }
 
 // ---------- Économie ----------
@@ -393,7 +430,7 @@ export function settle(s: GameState): Settlement {
 
   const cap = Math.round(p.launderCap * (s.launderRate ?? 1));
   const launderTaken = Math.min(dirty, cap);
-  const launderGiven = Math.round(launderTaken * (1 - LAUNDER_FEE));
+  const launderGiven = Math.round(launderTaken * (1 - launderFee(s)));
   dirty -= launderTaken;
   clean += launderGiven;
 
@@ -456,7 +493,7 @@ function economy(s: GameState) {
   // respect
   const respectGain = Math.floor(owned(s).length / 3) +
     owned(s).reduce((t, d) => t + d.businesses.filter((b) => b.kind === 'restaurant').length, 0);
-  s.respect = clamp(s.respect + respectGain, 0, 150);
+  s.respect = clamp(s.respect + respectGain + (donHasTalent(s, 'p_respect') ? 1 : 0), 0, 150);
 }
 
 // ---------- Descentes de police ----------
@@ -464,7 +501,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
   for (const d of owned(s)) {
     const illegal = d.businesses.filter((b) => BUSINESSES[b.kind].illegal);
     if (!illegal.length) continue;
-    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d));
+    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d)) * (donHasTalent(s, 'r_ombre') ? 0.8 : 1);
     if (d.bribedCop) p *= 0.3;
     if (s.lowProfile) p *= 0.3;
     if (!chance(p)) continue;
@@ -492,6 +529,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
         m.status = 'prison';
         m.statusWeeks = randInt(3, 6);
         if (s.judge) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
+        if (donHasTalent(s, 'r_avocat')) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
         log(s, 'police', `${m.nickname} est arrêté (${m.statusWeeks} sem. de prison${s.judge ? ', le juge a arrangé la peine' : ''}).`);
       }
     }
@@ -521,7 +559,7 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     if (r.truceWeeks > 0) r.truceWeeks--;
 
     // attaque : la relation avec le joueur décide s'il est une cible
-    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1) * (donHas(r, 'sanguinaire') ? 1.3 : 1);
+    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1) * (donHas(r, 'sanguinaire') ? 1.3 : 1) * (donHasTalent(s, 'b_terreur') ? 0.75 : 1);
     if (s.week < 5 || !chance(aggression)) continue;
     const spareFriend = !r.war && r.relation > 30 && chance(0.8);
     const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter((d) => {
@@ -616,7 +654,8 @@ function crewTurn(s: GameState, raided: Set<string>) {
       continue;
     }
     m.weeksServed++;
-    let delta = 0;
+    if (m.isDon || m.isChild) { m.loyalty = 100; continue; }
+    let delta = donHasTalent(s, 'p_parole') ? 1 : 0;
     if (s.respect >= 50) delta += 1;
     if (m.rank === 'soldat' && m.assignment && membersIn(s, m.assignment).some((o) => o.rank === 'capo')) delta += 1;
     if (m.assignment && raided.has(m.assignment)) delta -= 5;
@@ -647,7 +686,7 @@ function betray(s: GameState, m: Member) {
 function donArrestCheck(s: GameState) {
   if (s.heat >= 70 && s.heat < 85) log(s, 'police', 'Le procureur prépare un dossier contre toi. Fais baisser la pression.');
   if (s.heat < 85) return;
-  if (!chance((s.heat - 80) / 50)) {
+  if (!chance(((s.heat - 80) / 50) * (donHasTalent(s, 'r_insaisissable') ? 0.5 : 1))) {
     log(s, 'police', 'Les fédéraux rôdent autour de ta maison. Une inculpation est imminente.');
     return;
   }
@@ -656,9 +695,15 @@ function donArrestCheck(s: GameState) {
     s.clean = Math.max(0, s.clean - 2000);
     log(s, 'police', "Tu es inculpé… mais ton juge fait annuler la procédure pour vice de forme (-2 000 propre, -30 heat).");
   } else {
-    s.status = 'lost';
-    s.endReason = "Les fédéraux t'ont arrêté. Sans juge dans ta poche, tu prends 20 ans à Leavenworth.";
-    log(s, 'bad', s.endReason);
+    const don = s.members.find((m) => m.isDon);
+    if (don) {
+      s.heat = clamp(s.heat - 30, 0, 100);
+      succession(s, don, 'a été condamné à 20 ans de prison fédérale');
+    } else {
+      s.status = 'lost';
+      s.endReason = "Les fédéraux ont démantelé la famille pendant la régence.";
+      log(s, 'bad', s.endReason);
+    }
   }
 }
 

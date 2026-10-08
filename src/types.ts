@@ -2,6 +2,8 @@ export type FamilyId = 'player' | 'castellano' | 'kilbride' | 'wolska';
 export type Owner = FamilyId | 'neutral';
 
 import type { DonTraitId, TraitId } from './traits';
+import type { TalentId } from './don';
+import type { EduId, SpouseOrigin, SpouseTraitId } from './family';
 
 export type BusinessKind =
   | 'speakeasy'
@@ -137,6 +139,69 @@ export interface Member {
   traits?: TraitId[];
   /** expérience accumulée par type d'action, décide de la stat qui progresse */
   usage?: { force: number; discretion: number };
+  // ----- le Don et ses enfants (force = Poigne, discrétion = Ombre) -----
+  isDon?: boolean;
+  isChild?: boolean;
+  childId?: number;
+  verbe?: number;
+  flair?: number;
+  talents?: TalentId[];
+  points?: number;
+  birthWeek?: number;
+  sex?: 'm' | 'f';
+  scars?: number;
+  seed?: number;
+}
+
+export interface Spouse {
+  name: string;
+  origin: SpouseOrigin;
+  rivalId?: string;
+  traits: SpouseTraitId[];
+  affection: number; // 0..100
+  seed: number;
+  birthWeek: number;
+  pregnantWeeks?: number; // semaines avant la naissance
+  lastGift?: number; // semaine de la dernière attention
+}
+
+export interface Courtship {
+  name: string;
+  origin: SpouseOrigin;
+  rivalId?: string;
+  traits: SpouseTraitId[];
+  progress: number; // 0..100
+  seed: number;
+  birthWeek: number;
+  lastDate?: number;
+}
+
+export interface Child {
+  id: number;
+  name: string;
+  sex: 'm' | 'f';
+  birthWeek: number;
+  seed: number;
+  education: EduId[];
+  generation: number;
+  memberId?: number; // une fois entré dans la famille (16 ans)
+  motherOrigin?: SpouseOrigin;
+  /** talents légués par le Don défunt, appliqués à la fin de la régence */
+  inheritTalents?: TalentId[];
+}
+
+export interface Regency {
+  childId: number;
+  regentId?: number; // capo régent (sinon la mère)
+  regentName: string;
+}
+
+export interface PastDon {
+  name: string;
+  nickname: string;
+  fromWeek: number;
+  toWeek: number;
+  cause: string;
 }
 
 export interface Recruit {
@@ -227,6 +292,14 @@ export interface GameState {
   headlines: Headline[];
   news: { prio: number; title: string; sub: string }[];
   lastEventKey?: string;
+  spouse?: Spouse | null;
+  courtship?: Courtship | null;
+  pendingCandidate?: Courtship | null;
+  children?: Child[];
+  heirId?: number | null;
+  regency?: Regency | null;
+  generation?: number;
+  dynasty?: PastDon[];
   /** jour de la semaine en cours (0 = lundi … 6 = dimanche) */
   day?: number;
   speed?: number;

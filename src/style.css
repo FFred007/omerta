@@ -517,3 +517,45 @@ select {
 .trait-inline { color: var(--brass); }
 .need { font-size: 11.5px; }
 .row.recruit { align-items: flex-start; }
+
+/* ---------- le Don, sa famille, les portraits ---------- */
+.portrait { flex: none; display: block; }
+.brand-don { background: none; border: none; padding: 0; cursor: pointer; align-self: center; }
+.with-face { display: flex; gap: 10px; align-items: flex-start; }
+.with-face > div { min-width: 0; }
+.donmark { color: var(--brass); font-weight: 700; }
+.don-card { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; }
+.don-card h3 { margin: 0; }
+.don-card .flavor { margin: 2px 0 6px; }
+.xp.wide, .mood-meter.wide { width: 100%; max-width: 280px; }
+.mood-meter.wide { display: block; margin-top: 4px; }
+.dstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin: 10px 0; }
+.dstat { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.14); }
+.dstat > span { font-family: var(--display); font-size: 15px; }
+.dstat > b { font-size: 18px; }
+.dstat small { grid-column: 1 / -1; color: var(--ivory-dim); font-size: 11px; line-height: 1.35; }
+.box-note { font-size: 12.5px; color: var(--ivory-dim); border-left: 3px solid var(--brass); padding: 8px 12px; background: rgba(0, 0, 0, 0.16); margin: 10px 0 4px; }
+.box-note b { color: var(--ivory); }
+.branches { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.branch h4 { margin: 0 0 2px; }
+.branch .note { margin: 0 0 6px; }
+.talent {
+  display: grid; grid-template-columns: 20px 1fr; gap: 0 6px; width: 100%; text-align: left; padding: 6px 8px; margin-bottom: 5px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.12); opacity: 0.55;
+}
+.talent .tier { grid-row: span 2; font-family: var(--display); color: var(--brass-dim); font-size: 15px; }
+.talent b { font-size: 12.5px; }
+.talent small { font-size: 11px; color: var(--ivory-dim); line-height: 1.35; }
+.talent.can { opacity: 1; border-color: var(--brass); cursor: pointer; }
+.talent.can:hover { background: rgba(196, 160, 82, 0.1); }
+.talent.owned { opacity: 1; border-color: var(--brass); background: rgba(196, 160, 82, 0.16); cursor: default; }
+.talent.owned .tier { color: var(--brass); }
+.talent:disabled { cursor: default; }
+.person, .kid { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px dashed rgba(196, 160, 82, 0.15); }
+.person .grow, .kid .grow { min-width: 0; flex: 1; }
+.kid small { display: block; color: var(--ivory-dim); font-size: 12px; margin: 2px 0 6px; }
+.kid.heir b { color: var(--brass); }
+.aff { font-size: 12.5px; margin: 8px 0; }
+@media (max-width: 520px) {
+  .don-card { flex-direction: column; align-items: flex-start; }
+}

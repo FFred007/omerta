@@ -1,6 +1,8 @@
 // Diplomatie avec les autres Dons + une du Corrano Herald
 import { activeMembers, clamp, log, news, pick, rival } from './state';
 import { donHas, familyHas, has } from './traits';
+import { donHasTalent, donOf } from './don';
+import { spouseHas } from './family';
 import type { GameState, RivalFamily } from './types';
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -32,14 +34,19 @@ function get(s: GameState, id: string) {
   return r;
 }
 
+export const sitDownCost = (s: GameState) => (donHasTalent(s, 'p_table') ? 0 : SIT_DOWN_COST);
+
 export function sitDown(s: GameState, id: string): Result {
   const r = get(s, id);
   if (!r) return fail('Cette famille a disparu.');
   if (r.war) return fail('On ne parle pas avec une famille en guerre. Négocie la paix.');
   if (r.talkCooldown > 0) return fail(`${r.boss} ne te recevra pas avant ${r.talkCooldown} semaine(s).`);
-  if (s.clean < SIT_DOWN_COST) return fail(`Un dîner chez Benedetti coûte ${SIT_DOWN_COST} $ propres.`);
-  s.clean -= SIT_DOWN_COST;
-  const gain = 12 + Math.round(s.respect / 10) + (familyHas(s, 'negociateur') ? 6 : 0) + (donHas(r, 'diplomate') ? 5 : 0);
+  const cost = sitDownCost(s);
+  if (s.clean < cost) return fail(`Un dîner chez Benedetti coûte ${cost} $ propres.`);
+  s.clean -= cost;
+  const verbe = donOf(s)?.verbe ?? 5;
+  const gain = 12 + Math.round(s.respect / 10) + (familyHas(s, 'negociateur') ? 6 : 0) + (donHas(r, 'diplomate') ? 5 : 0)
+    + Math.max(0, verbe - 5) + (donHasTalent(s, 'p_table') ? 5 : 0) + (spouseHas(s, 'diplomate') ? 5 : 0);
   r.relation = clamp(r.relation + gain, -100, 100);
   r.talkCooldown = 3;
   log(s, 'neutral', `Dîner avec ${r.boss}. On parle affaires, famille et respect (+${gain} relation).`);
