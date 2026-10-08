@@ -1,13 +1,20 @@
-import { BUSINESSES, COP_BRIBE, COUNCIL_BRIBE, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE_COST, weekLabel } from './data';
+import {
+  BUSINESSES, COP_BRIBE, COUNCIL_BRIBE, ESCORTS, GOOD_ORDER, GOODS, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE_COST, SPEAKEASY_DEMAND,
+  TARIFFS, rankOf, weekLabel,
+} from './data';
+import * as B from './booze';
+import * as D from './diplomacy';
 import * as E from './engine';
 import { resolveEvent } from './events';
+import { jobChance, teamSkill, toggleJobMember } from './jobs';
+import { ALIBI_HEAT, favorAlibi, favorFreePrisoner, moodLabel, setTariff } from './shops';
 import {
-  activeMembers, attackPower, businessIncome, winChance, clamp, clearSave, committedToAttack, defenseOf, district, isAttackable, load, membersIn,
-  newGame, owned, projection, rival, save,
+  activeMembers, attackPower, clamp, clearSave, defenseOf, district, isAttackable, load, membersIn, onAttack, onJob,
+  owned, pendingCrates, projection, racketOf, retailPrice, rival, salesPlan, satisfaction, save, stockTotal, storageCap, winChance,
 } from './state';
-import type { BusinessKind, District, GameState, Member, Owner } from './types';
+import type { BusinessKind, District, Escort, GameState, Good, Job, Member, Owner, RivalFamily, Tariff } from './types';
 
-type Tab = 'quartier' | 'famille' | 'corruption' | 'rivaux' | 'journal';
+type Tab = 'quartier' | 'business' | 'coups' | 'famille' | 'corruption' | 'rivaux' | 'journal';
 
 const ui = {
   tab: 'quartier' as Tab,
@@ -19,9 +26,11 @@ const ui = {
   toastTimer: 0,
   confirm: '', // clé du bouton en attente de confirmation
   confirmTimer: 0,
+  qty: { biere: 15, gin: 15, whisky: 10 } as Record<Good, number>,
+  escort: 'legere' as Escort,
 };
 
-let s: GameState = load() ?? newGame();
+let s: GameState = load() ?? E.startGame();
 if (s.week === 1 && s.log.length <= 1) ui.showIntro = true;
 
 const app = document.getElementById('app')!;
@@ -31,6 +40,9 @@ const app = document.getElementById('app')!;
 // =====================================================================
 const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const money = E.fmt;
+const sign = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '') + money(Math.abs(n));
+const pct = (p: number) => `${Math.round(p * 100)} %`;
+const oddsTone = (p: number) => (p >= 0.7 ? 'var(--good)' : p >= 0.4 ? 'var(--brass)' : 'var(--oxblood-bright)');
 
 function ownerColor(o: Owner) {
   if (o === 'player') return 'var(--player)';
@@ -44,18 +56,28 @@ function ownerName(o: Owner) {
 }
 const SHORT: Record<BusinessKind, string> = {
   speakeasy: 'Bar', tripot: 'Jeu', distillerie: 'Alambic', paris: 'Paris',
-  blanchisserie: 'Lavoir', restaurant: 'Resto', garage: 'Garage',
+  blanchisserie: 'Lavoir', restaurant: 'Resto', garage: 'Garage', entrepot: 'Dépôt',
 };
+const moodTone = (sat: number) => (sat < 30 ? 'var(--oxblood-bright)' : sat < 45 ? 'var(--brass)' : sat < 70 ? 'var(--ivory-dim)' : 'var(--good)');
 
+function busyLabel(m: Member) {
+  if ((m.fatigue ?? 0) > 0) return 'récupère du dernier assaut';
+  const j = onJob(s, m.id);
+  if (j) return 'sur un coup';
+  const o = onAttack(s, m.id);
+  if (o) return `assaut sur ${district(s, o.districtId).name}`;
+  return m.assignment ? `garde ${district(s, m.assignment).name}` : 'réserve';
+}
 
 // =====================================================================
 // Rendu
 // =====================================================================
 export function render() {
   save(s);
-  // mémorise le focus pour le restaurer après le re-rendu (navigation clavier)
   const active = document.activeElement as HTMLElement | null;
-  const focusKey = active?.dataset?.act ? `[data-act="${active.dataset.act}"]${active.dataset.id ? `[data-id="${active.dataset.id}"]` : ''}` : null;
+  const focusKey = active?.dataset?.act
+    ? `[data-act="${active.dataset.act}"]${active.dataset.id ? `[data-id="${active.dataset.id}"]` : ''}${active.dataset.job ? `[data-job="${active.dataset.job}"]` : ''}`
+    : null;
   app.innerHTML = `
     ${topbar()}
     <main class="layout">
@@ -80,12 +102,14 @@ function topbar() {
   <header class="topbar">
     <div class="brand">
       <h1>Omertà</h1>
-      <span class="date">${esc(s.familyName)} · semaine ${s.week} · ${weekLabel(s.week)}</span>
+      <span class="date">${esc(s.familyName)} · ${rankOf(s.respect)} · semaine ${s.week} · ${weekLabel(s.week)}</span>
     </div>
     <div class="ledger-strip">
       <div class="stat"><span class="k">Argent sale</span><span class="v dirty">${money(s.dirty)}</span></div>
       <div class="stat"><span class="k">Argent propre</span><span class="v clean">${money(s.clean)}</span></div>
+      <div class="stat"><span class="k">Caisses</span><span class="v">${stockTotal(s)}<small class="muted">/${storageCap(s)}</small></span></div>
       <div class="stat"><span class="k">Respect</span><span class="v">${s.respect}</span></div>
+      <div class="stat"><span class="k">Faveurs</span><span class="v">${s.favors}</span></div>
       <div class="stat heat"><span class="k">Heat <span class="num ${heatTone}">${s.heat}/100</span></span>
         <div class="heat-bar" role="meter" aria-valuenow="${s.heat}" aria-valuemin="0" aria-valuemax="100" aria-label="Heat"><i style="width:${s.heat}%"></i></div>
       </div>
@@ -108,6 +132,7 @@ function mapView() {
       const chips = d.businesses
         .map((b) => `<span class="chip ${BUSINESSES[b.kind].illegal ? 'illegal' : 'legal'}">${SHORT[b.kind]}</span>`)
         .join('');
+      const sat = satisfaction(d);
       const extra = [
         mine ? `<span class="chip">${men} homme${men > 1 ? 's' : ''}</span>` : '',
         mine && d.bribedCop ? '<span class="chip legal">Flic payé</span>' : '',
@@ -120,6 +145,7 @@ function mapView() {
         <span class="tdef" title="Défense">déf ${defenseOf(s, d)}</span>
         <span class="tname">${esc(d.name)}</span>
         <span class="towner">${esc(ownerName(d.owner))}</span>
+        ${mine ? `<span class="tmood" style="--mood:${moodTone(sat)}" title="Commerçants : ${moodLabel(sat)}">${moodLabel(sat)}</span>` : ''}
         <span class="tfoot">${chips}${extra}</span>
         ${order ? '<span class="badge-attack">Assaut prévu</span>' : ''}
       </button>`;
@@ -127,12 +153,16 @@ function mapView() {
     .join('');
   const legend = [
     `<span><i style="background:var(--player)"></i>${esc(s.familyName)}</span>`,
-    ...s.rivals.filter((r) => r.alive).map((r) => `<span><i style="background:${r.color}"></i>${esc(r.name)}</span>`),
+    ...s.rivals.filter((r) => r.alive).map((r) => `<span><i style="background:${r.color}"></i>${esc(r.name)}${r.alliance ? ' (allié)' : r.war ? ' (guerre)' : ''}</span>`),
     `<span><i style="background:var(--neutral)"></i>Indépendants</span>`,
   ].join('');
+  const busy = [
+    s.shipments.length ? `${s.shipments.length} livraison${s.shipments.length > 1 ? 's' : ''} cette nuit` : '',
+    s.jobs.filter((j) => j.team.length >= j.minMen).length ? `${s.jobs.filter((j) => j.team.length >= j.minMen).length} coup(s) prévu(s)` : '',
+  ].filter(Boolean).join(' · ');
   return `
   <div class="map-wrap">
-    <div class="map-title"><h2>New Corrano</h2><span class="muted" style="font-size:13px">${owned(s).length} / 9 quartiers</span></div>
+    <div class="map-title"><h2>New Corrano</h2><span class="muted" style="font-size:13px">${busy ? esc(busy) + ' · ' : ''}${owned(s).length} / 9 quartiers</span></div>
     <div class="map">${tiles}</div>
     <div class="legend">${legend}</div>
   </div>`;
@@ -141,13 +171,18 @@ function mapView() {
 function weekCard() {
   const p = projection(s);
   const f = E.settle(s);
-  const net = p.heatGain - 3 + (s.councilman ? -3 : 0) + (s.lowProfile ? -6 : 0);
+  const net = p.heatGain - E.HEAT_DECAY + (s.councilman ? -3 : 0) + (s.lowProfile ? -6 : 0);
   const blocked = !!s.pendingEvent || s.status !== 'playing';
   const rate = s.launderRate ?? 1;
-  const sign = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '') + money(Math.abs(n));
   const row = (label: string, n: number, cls: string) =>
     n ? `<span>${label}</span><span class="num ${cls}">${sign(n)}</span>` : '';
   const rates: [number, string][] = [[1, 'Max'], [0.5, 'Moitié'], [0, 'Arrêt']];
+  const crates = GOOD_ORDER.reduce((t, g) => t + p.plan.sold[g], 0);
+  const jobsReady = s.jobs.filter((j) => j.team.length >= j.minMen).length;
+  const label = [
+    s.orders.length ? `${s.orders.length} assaut${s.orders.length > 1 ? 's' : ''}` : '',
+    jobsReady ? `${jobsReady} coup${jobsReady > 1 ? 's' : ''}` : '',
+  ].filter(Boolean).join(' · ');
   return `
   <div class="week-card">
     <h3>Prévisions de la semaine</h3>
@@ -155,7 +190,9 @@ function weekCard() {
       <div>
         <h4 class="dirty">Argent sale</h4>
         <div class="ledger-rows">
-          ${row('Rackets et commerces illégaux', f.dirtyIn, 'dirty')}
+          ${row('Protection des commerçants', p.racket, 'dirty')}
+          ${row(`Ventes d'alcool (${crates} caisses)`, p.booze, 'dirty')}
+          ${row('Tripots, paris, entrées des bars', p.fixed, 'dirty')}
           ${row('Salaires', -f.salDirty, 'dirty')}
           ${row('Envoyé au blanchiment', -f.launderTaken, 'dirty')}
           <span class="total">Bilan</span><span class="num total ${f.dirtyNet < 0 ? 'danger' : 'dirty'}">${sign(f.dirtyNet)}</span>
@@ -172,16 +209,17 @@ function weekCard() {
         </div>
       </div>
     </div>
+    ${p.plan.shortage ? `<p class="note danger">Rupture de stock : il manquera ${p.plan.shortage} caisses dans tes speakeasies. <button class="linkish" data-act="tab" data-id="business">Acheter de l'alcool</button></p>` : ''}
     ${f.unpaid ? `<p class="note danger">Il manquera ${money(f.unpaid)} pour payer tes hommes : leur loyauté va chuter.</p>` : ''}
     ${!f.bribesOk && f.bribes ? `<p class="note danger">Pas assez d'argent propre pour les enveloppes : tes contacts vont te lâcher.</p>` : ''}
     ${p.launderCap ? `<div class="launder" role="group" aria-label="Blanchiment">
       <span>Blanchiment <span class="muted">(capacité ${money(p.launderCap)})</span></span>
       <span class="seg">${rates.map(([r, l]) => `<button class="btn small ${rate === r ? 'on' : ''}" data-act="launder" data-id="${r}" aria-pressed="${rate === r}">${l}</button>`).join('')}</span>
     </div>` : ''}
-    <div class="heat-line"><span>Variation de heat (hors combats)</span><span class="num ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span></div>
+    <div class="heat-line"><span>Variation de heat (hors combats et coups)</span><span class="num ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span></div>
     <div class="end-dock">
       <button class="btn primary end-turn" data-act="end" ${blocked ? 'disabled' : ''}>
-        ${s.orders.length ? `Fin de semaine · ${s.orders.length} assaut${s.orders.length > 1 ? 's' : ''}` : 'Fin de semaine'}
+        ${label ? `Fin de semaine · ${label}` : 'Fin de semaine'}
       </button>
     </div>
   </div>`;
@@ -191,9 +229,11 @@ function tabs() {
   const injured = s.members.filter((m) => m.status !== 'actif').length;
   const items: [Tab, string, string][] = [
     ['quartier', 'Quartier', ''],
+    ['business', 'Alcool', salesPlan(s).shortage ? '!' : ''],
+    ['coups', 'Coups', String(s.jobs.length)],
     ['famille', 'Famille', `${activeMembers(s).length}${injured ? `+${injured}` : ''}`],
     ['corruption', 'Corruption', ''],
-    ['rivaux', 'Rivaux', ''],
+    ['rivaux', 'Rivaux', s.rivals.some((r) => r.war) ? 'guerre' : ''],
     ['journal', 'Journal', ''],
   ];
   return `<nav class="tabs" role="tablist">${items
@@ -204,6 +244,8 @@ function tabs() {
 function panel() {
   switch (ui.tab) {
     case 'quartier': return districtPanel(district(s, ui.selected));
+    case 'business': return businessPanel();
+    case 'coups': return jobsPanel();
     case 'famille': return familyPanel();
     case 'corruption': return corruptionPanel();
     case 'rivaux': return rivalsPanel();
@@ -219,7 +261,8 @@ function districtPanel(d: District) {
     <p class="flavor">${esc(d.flavor)}</p>
     <div class="facts">
       <span>Tenu par <b class="owner-name" style="color:${ownerColor(d.owner)}">${esc(ownerName(d.owner))}</b></span>
-      <span>Protection <b class="dirty">${money(d.racket)}</b>/sem.</span>
+      <span>Protection <b class="dirty">${money(d.owner === 'player' ? racketOf(d) : d.racket)}</b>/sem.</span>
+      <span>Clientèle ×${d.wealth.toLocaleString('fr-FR')}</span>
       <span>Police ${policeTxt}</span>
       <span>Défense <b>${defenseOf(s, d)}</b></span>
       <span>Emplacements <b>${d.businesses.length}/${d.slots}</b></span>
@@ -235,14 +278,26 @@ function districtPanel(d: District) {
   return html;
 }
 
-function businessList(d: District, sellable: boolean) {
+function businessList(d: District, mine: boolean) {
   if (!d.businesses.length) return `<p class="empty">Aucun établissement.</p>`;
+  const plan = mine ? salesPlan(s) : null;
+  let speakIdx = 0;
+  const outlets = plan ? plan.outlets.filter((o) => o.districtId === d.id) : [];
+  let tripIdx = 0;
   return `<div class="rows">${d.businesses
     .map((b) => {
       const def = BUSINESSES[b.kind];
-      const inc = def.illegal ? `<span class="dirty">+${money(businessIncome(s, d, b.kind))} sale</span>` : `<span class="clean">blanchit ${money(def.launder)}${def.income ? `, +${money(def.income)} propre` : ''}</span>`;
+      let inc = '';
+      if (b.kind === 'speakeasy' || b.kind === 'tripot') {
+        const list = outlets.filter((o) => o.kind === b.kind);
+        const o = list[b.kind === 'speakeasy' ? speakIdx++ : tripIdx++];
+        const sold = o ? GOOD_ORDER.reduce((t, g) => t + (o.sold[g] ?? 0), 0) : 0;
+        inc = `<span class="dirty">${money(def.income)} fixe${mine ? ` + ${sold}/${o?.demand ?? 0} caisses vendues (${money(o?.revenue ?? 0)})` : ''}</span>`;
+      } else if (b.kind === 'distillerie') inc = `<span class="dirty">+${b.kind === 'distillerie' && d.id === 'docks' ? 50 : 25} caisses de gin / sem.</span>`;
+      else if (def.illegal) inc = `<span class="dirty">+${money(def.income)} sale</span>`;
+      else inc = `<span class="clean">blanchit ${money(def.launder)}${def.income ? `, +${money(def.income)} propre` : ''}${def.storage ? `, +${def.storage} caisses de stockage` : ''}</span>`;
       return `<div class="row"><div class="grow">${def.name}<small>${inc}</small></div>
-        ${sellable ? `<button class="btn small" data-act="sell" data-id="${b.id}">Revendre ${money(def.cost * 0.4)}</button>` : ''}</div>`;
+        ${mine ? `<button class="btn small" data-act="sell" data-id="${b.id}">Revendre ${money(def.cost * 0.4)}</button>` : ''}</div>`;
     })
     .join('')}</div>`;
 }
@@ -260,13 +315,25 @@ function ownDistrict(d: District) {
         <span class="num ${def.currency}">${money(def.cost)} ${def.currency === 'dirty' ? 'sale' : 'propre'}</span></button>`;
     })
     .join('');
+  const sat = satisfaction(d);
+  const tariffs = (Object.keys(TARIFFS) as Tariff[]).map((k) =>
+    `<button class="btn small ${d.tariff === k ? 'on' : ''}" data-act="tariff" data-id="${k}" aria-pressed="${d.tariff === k}">${TARIFFS[k].name} ×${TARIFFS[k].mult.toLocaleString('fr-FR')}</button>`).join('');
   return `
+    <h4>Les commerçants · <span style="color:${moodTone(sat)}">${moodLabel(sat)} (${sat}/100)</span></h4>
+    <div class="rows">${d.shops.map((x) => `
+      <div class="row"><div class="grow">${esc(x.owner)}<small>${esc(x.trade)}</small></div>
+        <div class="mood-meter" role="meter" aria-valuenow="${x.satisfaction}" aria-valuemin="0" aria-valuemax="100" aria-label="Satisfaction de ${esc(x.owner)}"><i style="width:${x.satisfaction}%;background:${moodTone(x.satisfaction)}"></i></div></div>`).join('')}
+    </div>
+    <div class="launder" role="group" aria-label="Tarif de protection">
+      <span>Tarif de protection</span><span class="seg">${tariffs}</span>
+    </div>
+    <p class="note">Bas : +5 satisfaction/sem. · Normal : +1 · Élevé : −5. Sous 30, ils cachent leur argent (protection ×0,6), attirent les descentes et finissent par te dénoncer. À 70 et plus, ils te couvrent face aux Prohis.</p>
     <h4>Établissements</h4>
     ${businessList(d, true)}
     <h4>Ouvrir un établissement ${full ? '<span class="muted">(quartier plein)</span>' : ''}</h4>
     <div class="build-grid">${builds}</div>
     <h4>Hommes postés ici</h4>
-    ${men.length ? `<div class="rows">${men.map((m) => `<div class="row"><div class="grow">${esc(m.name)} « ${esc(m.nickname)} »${m.rank === 'capo' ? ' <span class="muted">(capo, +20 % revenus)</span>' : ''}<small>Force ${m.force} · Loyauté ${m.loyalty}${committedToAttack(s, m.id) ? ' · part à l\'assaut' : ''}</small></div>
+    ${men.length ? `<div class="rows">${men.map((m) => `<div class="row"><div class="grow">${esc(m.name)} « ${esc(m.nickname)} »${m.rank === 'capo' ? ' <span class="muted">(capo, +20 % revenus)</span>' : ''}<small>Force ${m.force} · Loyauté ${m.loyalty} · ${busyLabel(m)}</small></div>
       <button class="btn small" data-act="assign" data-id="${m.id}" data-to="">Rappeler</button></div>`).join('')}</div>`
       : `<p class="empty">Personne ne garde ce quartier. Une famille rivale pourrait le prendre facilement.</p>`}
     ${reserve.length ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
@@ -286,13 +353,16 @@ function attackPanel(d: District) {
   if (r && r.truceWeeks > 0) {
     return `<h4>Établissements</h4>${businessList(d, false)}<p class="note">Trêve en cours avec ${esc(r.name)} : encore ${r.truceWeeks} semaine(s).</p>`;
   }
+  if (r && r.alliance) {
+    return `<h4>Établissements</h4>${businessList(d, false)}<p class="note">${esc(r.name)} est ton allié. Romps l'alliance dans l'onglet Rivaux pour pouvoir attaquer.</p>`;
+  }
   const avail = activeMembers(s);
   if (order && !ui.attackers.size) order.memberIds.forEach((id) => ui.attackers.add(id));
   const ids = [...ui.attackers].filter((id) => avail.some((m) => m.id === id && !((m.fatigue ?? 0) > 0)));
   const power = attackPower(s, ids);
   const def = defenseOf(s, d);
   const p = winChance(power, def);
-  const tone = p >= 0.7 ? '#6ea866' : p >= 0.4 ? 'var(--brass)' : 'var(--oxblood-bright)';
+  const tone = oddsTone(p);
   const verdict = !ids.length ? 'Choisis tes hommes.' : p >= 0.7 ? 'Favorable' : p >= 0.4 ? 'Risqué' : 'Suicidaire';
   return `
     <h4>Établissements à saisir</h4>${businessList(d, false)}
@@ -301,18 +371,151 @@ function attackPanel(d: District) {
       const tired = (m.fatigue ?? 0) > 0;
       return `
       <label class="check"><input type="checkbox" data-act="pick" data-id="${m.id}" ${ui.attackers.has(m.id) && !tired ? 'checked' : ''} ${tired ? 'disabled' : ''}>
-        <span>${esc(m.nickname)} <span class="muted">· F${m.force}${m.rank === 'capo' ? '+2' : ''} · ${tired ? 'récupère du dernier assaut' : m.assignment ? 'garde ' + esc(district(s, m.assignment).name) : 'réserve'}</span></span></label>`;
+        <span>${esc(m.nickname)} <span class="muted">· F${m.force}${m.rank === 'capo' ? '+2' : ''} · ${busyLabel(m)}</span></span></label>`;
     }).join('')
       : '<p class="empty">Aucun homme disponible.</p>'}
     <div class="odds" style="--odds:${tone}">
       Puissance <b class="num">${power}</b> contre défense <b class="num">${def}</b> ·
-      <b style="color:${tone}">${verdict}${ids.length ? ` (${Math.round(p * 100)} %)` : ''}</b>
-      <div class="note">Chaque camp tire un multiplicateur entre ×0,75 et ×1,25 ; le pourcentage est exact. Un quartier conquis ne peut pas être repris par un rival la même nuit. Les hommes engagés ne défendent pas leur quartier cette semaine. En cas de victoire, ceux de la réserve tiennent le nouveau quartier, les autres rentrent à leur poste. Un assaut fait monter la heat de ${5 + d.police * 2}.</div>
+      <b style="color:${tone}">${verdict}${ids.length ? ` (${pct(p)})` : ''}</b>
+      <div class="note">Chaque camp tire un multiplicateur entre ×0,75 et ×1,25 ; le pourcentage est exact. Un quartier conquis ne peut pas être repris la même nuit. Les hommes engagés ne défendent pas leur quartier cette semaine. Un assaut fait monter la heat de ${5 + d.police * 2}${r ? ` et dégrade ta relation avec ${esc(r.name)}` : ''}.</div>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
       <button class="btn primary" data-act="attack" data-id="${d.id}" ${ids.length ? '' : 'disabled'}>${order ? "Modifier l'assaut" : "Ordonner l'assaut"}</button>
       ${order ? `<button class="btn" data-act="cancel-attack" data-id="${d.id}">Annuler l'assaut</button>` : ''}
     </div>`;
+}
+
+// ---------- Alcool ----------
+function trendArrow(g: Good) {
+  const t = s.marketTrend[g];
+  if (t > 0.03) return '<span class="up" title="Les prix montent">▲</span>';
+  if (t < -0.03) return '<span class="down" title="Les prix baissent">▼</span>';
+  return '<span class="muted" title="Stable">■</span>';
+}
+
+function businessPanel() {
+  const cap = storageCap(s);
+  const total = stockTotal(s);
+  const pending = pendingCrates(s);
+  const room = B.freeRoom(s);
+  const plan = salesPlan(s);
+  const speak = owned(s).reduce((t, d) => t + d.businesses.filter((b) => b.kind === 'speakeasy').length, 0);
+  const demand = speak * SPEAKEASY_DEMAND + plan.outlets.filter((o) => o.kind === 'tripot').length * 5;
+  const bestRetail = (g: Good) => {
+    const ds = owned(s).filter((d) => d.businesses.some((b) => b.kind === 'speakeasy'));
+    return ds.length ? Math.max(...ds.map((d) => retailPrice(d, g))) : GOODS[g].retail;
+  };
+  const risk = (e: Escort) => B.shipmentRisk(s, e);
+  const rows = GOOD_ORDER.map((g) => {
+    const pr = B.prices(s, g);
+    const q = ui.qty[g];
+    const costS = B.smuggleCost(s, g, q, ui.escort);
+    const costW = pr.wholesaler * q;
+    return `
+    <div class="good">
+      <div class="good-head">
+        <b>${GOODS[g].name}</b> ${trendArrow(g)}
+        <span class="muted">en stock <b class="num">${s.stock[g]}</b></span>
+        <span class="muted">au comptoir jusqu'à <b class="num dirty">${money(bestRetail(g))}</b></span>
+      </div>
+      <div class="good-prices">
+        <span>Lac <b class="num">${money(pr.smuggle)}</b></span>
+        <span>Grossiste <b class="num">${money(pr.wholesaler)}</b></span>
+        <span>Revente en gros <b class="num">${money(pr.resale)}</b></span>
+      </div>
+      <div class="good-acts">
+        <label class="qty"><span class="sr">Quantité de ${GOODS[g].plural}</span>
+          <button class="btn small" data-act="qty" data-id="${g}" data-d="-5" aria-label="Moins 5">−</button>
+          <input id="qty-${g}" type="number" inputmode="numeric" min="0" step="5" value="${q}" data-act="qty-input" data-id="${g}">
+          <button class="btn small" data-act="qty" data-id="${g}" data-d="5" aria-label="Plus 5">+</button>
+        </label>
+        ${room <= 0
+          ? `<button class="btn small" disabled>Entrepôt plein</button>`
+          : q > room
+          ? `<button class="btn small" data-act="fit" data-id="${g}">Seulement ${room} caisses de place : ajuster</button>`
+          : `<button class="btn small" data-act="smuggle" data-id="${g}" ${q > 0 && s.dirty + s.clean >= costS ? '' : 'disabled'}>Commander par le lac · ${money(costS)}</button>
+        <button class="btn small" data-act="wholesale" data-id="${g}" ${q > 0 && s.dirty + s.clean >= costW ? '' : 'disabled'}>Acheter au grossiste · ${money(costW)}</button>`}
+        <button class="btn small" data-act="resale" data-id="${g}" ${s.stock[g] > 0 ? '' : 'disabled'}>Revendre ${Math.min(q, s.stock[g])} · +${money(pr.resale * Math.min(q, s.stock[g]))}</button>
+      </div>
+    </div>`;
+  }).join('');
+  const escorts = (Object.keys(ESCORTS) as Escort[]).map((e) =>
+    `<button class="btn small ${ui.escort === e ? 'on' : ''}" data-act="escort" data-id="${e}" aria-pressed="${ui.escort === e}">${ESCORTS[e].name}${ESCORTS[e].cost ? ` · ${money(ESCORTS[e].cost)}` : ''} · ${pct(risk(e))}</button>`).join('');
+  return `
+    <h3>L'alcool</h3>
+    <p class="flavor">Tes speakeasies vendent ce que tu leur fournis : jusqu'à ${SPEAKEASY_DEMAND} caisses chacun par semaine, le whisky d'abord, puis le gin, puis la bière. Les beaux quartiers paient plus cher au verre.</p>
+    <div class="stockbar" role="meter" aria-valuenow="${total + pending}" aria-valuemin="0" aria-valuemax="${cap}" aria-label="Stock">
+      <i class="s-whisky" style="width:${(s.stock.whisky / cap) * 100}%"></i><i class="s-gin" style="width:${(s.stock.gin / cap) * 100}%"></i><i class="s-biere" style="width:${(s.stock.biere / cap) * 100}%"></i><i class="s-pending" style="width:${(pending / cap) * 100}%"></i>
+    </div>
+    <div class="facts">
+      <span>Stock <b>${total}/${cap}</b> caisses</span>
+      ${pending ? `<span>En route <b>${pending}</b></span>` : ''}
+      <span>Demande des bars <b>${demand}</b>/sem.</span>
+      ${plan.produced ? `<span>Distilleries <b>+${plan.produced}</b> gin/sem.</span>` : ''}
+      ${plan.shortage ? `<span class="danger">Il manquera ${plan.shortage} caisses</span>` : `<span class="clean">Bars approvisionnés</span>`}
+    </div>
+    <h4>Livraison par le lac</h4>
+    <p class="note">Moins cher, livré pendant la nuit (vendable la semaine prochaine). Risque d'interception par les Prohis ou d'embuscade d'un rival, selon la heat${s.safeRouteWeeks ? ` · route du garagiste encore ${s.safeRouteWeeks} sem. (risque ÷2)` : ''}.</p>
+    <div class="launder" role="group" aria-label="Escorte"><span>Escorte</span><span class="seg wrap">${escorts}</span></div>
+    ${s.shipments.length ? `<div class="rows">${s.shipments.map((x) => `
+      <div class="row"><div class="grow">${x.qty} caisses de ${GOODS[x.good].plural}<small>${ESCORTS[x.escort].name} · ${pct(B.shipmentRisk(s, x.escort))} de risque · payé ${money(x.paid)}</small></div>
+        <button class="btn small" data-act="cancel-ship" data-id="${x.id}">Annuler</button></div>`).join('')}</div>` : ''}
+    <h4>Le marché</h4>
+    ${rows}
+    <p class="note">Grossiste : immédiat et sans risque, mais 50 % plus cher que le lac. Revente en gros : pour profiter des pénuries. Les achats se paient en sale, puis en propre si besoin. Place libre : ${room} caisses.</p>`;
+}
+
+// ---------- Coups ----------
+function rewardText(j: Job) {
+  const w = j.reward;
+  const r = j.rivalId ? rival(s, j.rivalId) : undefined;
+  const parts: string[] = [];
+  if (w.dirty) parts.push(`<span class="dirty">+${money(w.dirty)} sale</span>`);
+  if (w.clean) parts.push(`<span class="clean">+${money(w.clean)} propre</span>`);
+  if (w.crates) parts.push(`+${w.crates.qty} caisses de ${GOODS[w.crates.good].plural}`);
+  if (w.respect) parts.push(`+${w.respect} respect`);
+  if (w.heat) parts.push(w.heat < 0 ? `<span class="clean">${w.heat} heat</span>` : `<span class="danger">+${w.heat} heat</span>`);
+  if (w.rivalHit && r) parts.push(`${esc(r.name)} −${w.rivalHit} force`);
+  if (w.burnBusiness && r) parts.push(`un établissement de ${esc(r.name)} détruit`);
+  return parts.join(' · ');
+}
+
+function jobsPanel() {
+  if (!s.jobs.length) return `<h3>Les coups</h3><p class="empty">Aucune opportunité cette semaine. Reviens après la fin de semaine.</p>`;
+  const avail = activeMembers(s);
+  return `
+    <h3>Les coups de la semaine</h3>
+    <p class="flavor">Des opportunités qui ne se représenteront pas. Choisis une équipe : la force ou la discrétion décide. Les hommes engagés ne gardent pas leur quartier cette semaine.</p>
+    ${s.jobs.map((j) => {
+      const skill = teamSkill(s, j);
+      const p = jobChance(s, j);
+      const r = j.rivalId ? rival(s, j.rivalId) : undefined;
+      const missing = Math.max(0, j.minMen - j.team.length);
+      return `
+      <article class="job ${j.team.length ? 'staffed' : ''}">
+        <div class="job-head"><b>${esc(j.title)}</b><span class="tag">${j.stat === 'force' ? 'Force' : 'Discrétion'} · difficulté ${j.difficulty}</span></div>
+        <p>${esc(j.text)}</p>
+        <div class="job-meta">
+          <span>Butin : ${rewardText(j)}</span>
+          <span>Si ça rate : <span class="danger">+${j.failHeat} heat</span>, ${j.danger >= 0.5 ? 'gros risque' : j.danger >= 0.35 ? 'risque' : 'petit risque'} de ${j.stat === 'discretion' ? 'prison' : 'blessures'}${r && j.relationHit ? ` · relation avec ${esc(r.name)} −${j.relationHit}` : ''}</span>
+        </div>
+        <div class="team">
+          ${avail.map((m) => {
+            const tired = (m.fatigue ?? 0) > 0;
+            const inThis = j.team.includes(m.id);
+            const stat = j.stat === 'force' ? m.force : m.discretion;
+            return `<label class="check"><input type="checkbox" data-act="job-pick" data-job="${j.id}" data-id="${m.id}" ${inThis ? 'checked' : ''} ${tired ? 'disabled' : ''}>
+              <span>${esc(m.nickname)} <span class="muted">· ${j.stat === 'force' ? 'F' : 'D'}${stat}${m.rank === 'capo' ? '+2' : ''}${inThis ? '' : ' · ' + busyLabel(m)}</span></span></label>`;
+          }).join('')}
+        </div>
+        <div class="odds" style="--odds:${j.team.length ? oddsTone(p) : 'var(--line)'}">
+          ${j.team.length
+            ? missing ? `Il manque ${missing} homme${missing > 1 ? 's' : ''} (minimum ${j.minMen}).`
+              : `Équipe <b class="num">${skill}</b> contre difficulté <b class="num">${j.difficulty}</b> · <b style="color:${oddsTone(p)}">${pct(p)}</b>`
+            : `Il faut au moins ${j.minMen} homme${j.minMen > 1 ? 's' : ''}.`}
+        </div>
+      </article>`;
+    }).join('')}`;
 }
 
 // ---------- Famille ----------
@@ -330,7 +533,7 @@ function familyPanel() {
           <span class="${m.loyalty < 35 ? 'loy-low' : ''}">Loyauté <b>${m.loyalty}</b></span>
           <span>Salaire <b class="dirty">${money(m.salary)}</b></span>
         </div>
-        ${statusTxt}
+        ${statusTxt}${m.status === 'actif' ? `<span class="muted" style="font-size:12px">${busyLabel(m)}</span>` : ''}
       </div>
       <div></div>
       <div class="acts">
@@ -340,6 +543,7 @@ function familyPanel() {
         </select>
         <button class="btn small" data-act="bonus" data-id="${m.id}" ${s.dirty >= 300 ? '' : 'disabled'}>Prime 300 $</button>
         ${m.rank === 'soldat' ? `<button class="btn small" data-act="promote" data-id="${m.id}" ${canPromote ? '' : 'disabled'} title="Loyauté ≥ 60, force + discrétion ≥ 12, ${PROMOTE_COST} $ sale">Faire capo</button>` : ''}
+        ${m.status === 'prison' ? `<button class="btn small" data-act="free" data-id="${m.id}" ${s.favors ? '' : 'disabled'}>Faire libérer · 1 faveur</button>` : ''}
         <button class="btn small danger" data-act="fire" data-id="${m.id}">${ui.confirm === `fire-${m.id}` ? 'Confirmer le renvoi' : 'Renvoyer'}</button>
       </div>
     </div>`;
@@ -370,8 +574,11 @@ function corruptionPanel() {
         <small>−3 heat par semaine et +25 % de capacité de blanchiment · ${money(COUNCIL_BRIBE)}/sem. · ${E.COUNCIL_MIN_RESPECT} respect requis</small></div>
         <button class="btn small" data-act="council">${s.councilman ? 'Arrêter de payer' : 'Acheter le conseiller'}</button></div>
       <div class="row"><div class="grow">Profil bas cette semaine
-        <small>Ferme tous tes commerces illégaux : aucun revenu sale, −6 heat, descentes ×0,3</small></div>
+        <small>Ferme tous tes commerces illégaux : aucune vente ni revenu sale, −6 heat, descentes ×0,3</small></div>
         <button class="btn small" data-act="low">${s.lowProfile ? 'Rouvrir' : 'Faire profil bas'}</button></div>
+      <div class="row"><div class="grow">Alibi des commerçants
+        <small>Tes amis jurent que tu étais à la messe : −${ALIBI_HEAT} heat · ${s.favors} faveur${s.favors > 1 ? 's' : ''} en réserve</small></div>
+        <button class="btn small" data-act="alibi" ${s.favors ? '' : 'disabled'}>Utiliser 1 faveur</button></div>
     </div>
     <h4>Sergents de quartier · ${money(COP_BRIBE)} propre/sem. chacun</h4>
     <div class="rows">${mine.map((d) => `
@@ -381,26 +588,64 @@ function corruptionPanel() {
 }
 
 // ---------- Rivaux ----------
+function relationMeter(r: RivalFamily) {
+  const v = clamp(r.relation, -100, 100);
+  const left = v < 0 ? 50 + v / 2 : 50;
+  const width = Math.abs(v) / 2;
+  const tone = r.war ? 'var(--oxblood-bright)' : v >= 0 ? 'var(--good)' : 'var(--oxblood)';
+  return `<div class="rel" role="meter" aria-valuenow="${Math.round(v)}" aria-valuemin="-100" aria-valuemax="100" aria-label="Relation avec ${esc(r.name)}">
+    <i style="left:${left}%;width:${width}%;background:${tone}"></i><b></b></div>`;
+}
+
 function rivalsPanel() {
   const max = Math.max(30, ...s.rivals.map((r) => r.strength));
+  const myForce = D.playerForce(s);
   return `
     <h3>Les familles</h3>
+    <p class="flavor">Ta force de frappe : <b>${myForce}</b>. Une relation haute les dissuade de t'attaquer ; une guerre double leur agressivité.</p>
     ${s.rivals.map((r) => {
       const terr = owned(s, r.id).map((d) => d.name).join(', ');
+      if (!r.alive) return `<div class="rival"><div class="rival-name" style="color:${r.color}">${esc(r.name)} <span class="muted">· éliminée</span></div><div class="boss">${esc(r.boss)} a quitté la ville.</div></div>`;
+      const cd = r.talkCooldown ? ` (${r.talkCooldown} sem.)` : '';
       return `<div class="rival">
-        <div class="rival-name" style="color:${r.color}">${esc(r.name)}${r.alive ? '' : ' <span class="muted">· éliminée</span>'}</div>
+        <div class="rival-name" style="color:${r.color}">${esc(r.name)}</div>
         <div class="boss">${esc(r.boss)}</div>
-        ${r.alive ? `
-        <div class="facts" style="margin-top:6px"><span>Force <b>${Math.round(r.strength)}</b></span><span>Territoire : ${esc(terr || 'aucun')}</span>${r.truceWeeks ? `<span>Trêve <b>${r.truceWeeks} sem.</b></span>` : ''}</div>
-        <div class="meter"><i style="width:${clamp((r.strength / max) * 100, 4, 100)}%;background:${r.color}"></i></div>` : ''}
+        <div class="facts" style="margin-top:6px">
+          <span>Force <b>${Math.round(r.strength)}</b></span>
+          <span>Relation <b>${Math.round(r.relation)}</b> · ${D.relationLabel(r)}</span>
+          ${r.truceWeeks ? `<span>Trêve <b>${r.truceWeeks} sem.</b></span>` : ''}
+          <span>Territoire : ${esc(terr || 'aucun')}</span>
+        </div>
+        <div class="meter"><i style="width:${clamp((r.strength / max) * 100, 4, 100)}%;background:${r.color}"></i></div>
+        ${relationMeter(r)}
+        <div class="diplo">
+          ${r.war
+            ? `<button class="btn small" data-act="peace" data-id="${r.id}" ${s.clean >= D.PEACE_COST ? '' : 'disabled'}>Négocier la paix · ${money(D.PEACE_COST)} propre</button>`
+            : `<button class="btn small" data-act="sitdown" data-id="${r.id}" ${!r.talkCooldown && s.clean >= D.SIT_DOWN_COST ? '' : 'disabled'}>Dîner d'affaires · ${money(D.SIT_DOWN_COST)}${cd}</button>
+               <button class="btn small" data-act="tribute" data-id="${r.id}" ${s.dirty >= D.TRIBUTE_PAY ? '' : 'disabled'}>Payer un tribut · ${money(D.TRIBUTE_PAY)}</button>
+               <button class="btn small" data-act="demand" data-id="${r.id}" ${r.talkCooldown ? 'disabled' : ''} title="Réussit si ta force dépasse ${Math.ceil(r.strength * 1.15)}">Exiger un tribut${myForce > r.strength * 1.15 ? '' : ' (risqué)'}${cd}</button>
+               ${r.alliance
+                 ? `<button class="btn small danger" data-act="break" data-id="${r.id}">${ui.confirm === `break-${r.id}` ? 'Confirmer la rupture' : "Rompre l'alliance"}</button>`
+                 : `<button class="btn small" data-act="ally" data-id="${r.id}" ${r.relation >= D.ALLIANCE_MIN ? '' : 'disabled'} title="Relation ${D.ALLIANCE_MIN} requise">Proposer une alliance</button>`}
+               <button class="btn small danger" data-act="war" data-id="${r.id}">${ui.confirm === `war-${r.id}` ? 'Confirmer la guerre' : 'Déclarer la guerre'}</button>`}
+        </div>
       </div>`;
-    }).join('')}
-    <p class="note">La défense d'un quartier rival dépend de la force de la famille, répartie sur ses territoires. Chaque victoire contre elle l'affaiblit.</p>`;
+    }).join('')}`;
 }
 
 // ---------- Journal ----------
+function herald(h: { week: number; title: string; sub: string }, big = false) {
+  return `<div class="herald ${big ? 'big' : ''}">
+    <div class="masthead"><span>The Corrano Herald</span><span>${weekLabel(h.week)} · 2 cents</span></div>
+    <div class="headline">${esc(h.title)}</div>
+    <div class="dek">${esc(h.sub)}</div>
+  </div>`;
+}
+
 function journalPanel() {
   return `<h3>Journal</h3>
+    ${s.headlines.length ? `<h4>Les unes du Corrano Herald</h4><div class="heralds">${s.headlines.slice(0, 6).map((h) => herald(h)).join('')}</div>` : ''}
+    <h4>Registre de la famille</h4>
     <ul class="log">${s.log.slice(0, 80).map((e) => `<li class="tone-${e.tone}"><span class="w">S${e.week}</span>${esc(e.text)}</li>`).join('')}</ul>`;
 }
 
@@ -411,7 +656,8 @@ function modals() {
       <h2>${s.status === 'won' ? 'Capo dei Capi' : 'Fin de la famille'}</h2>
       <p>${esc(s.endReason)}</p>
       <div class="facts"><span>Semaines <b>${s.week - 1}</b></span><span>Combats gagnés <b>${s.stats.battlesWon}</b></span>
-        <span>Perdus <b>${s.stats.battlesLost}</b></span><span>Descentes subies <b>${s.stats.raids}</b></span>
+        <span>Perdus <b>${s.stats.battlesLost}</b></span><span>Coups réussis <b>${s.stats.jobsDone}</b></span>
+        <span>Caisses vendues <b>${s.stats.cratesSold}</b></span><span>Descentes subies <b>${s.stats.raids}</b></span>
         <span>Blanchi <b>${money(s.stats.laundered)}</b></span></div>
       <div class="actions"><button class="btn primary" data-act="restart-confirm">Nouvelle partie</button></div>
     </div></div>`;
@@ -419,7 +665,7 @@ function modals() {
   if (ui.showIntro) {
     return `<div class="overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="intro-t">
       <h2 id="intro-t">New Corrano, 1925</h2>
-      <p>Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy et quatre hommes. Les Castellano, les Irlandais de Kilbride et le clan Wolska se partagent le reste de la ville.</p>
+      <p>Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy, une cave de 45 caisses et quatre hommes. Les Castellano, les Irlandais de Kilbride et le clan Wolska se partagent le reste de la ville.</p>
       <ul class="rules">${rulesList()}</ul>
       <label for="fam" class="muted" style="font-size:13px">Nom de ta famille</label>
       <input id="fam" type="text" value="${esc(s.familyName)}" maxlength="32">
@@ -427,7 +673,9 @@ function modals() {
     </div></div>`;
   }
   if (ui.showReport && s.lastReport.length) {
-    return `<div class="overlay"><div class="modal" role="dialog" aria-modal="true">
+    const h = s.headlines[0];
+    return `<div class="overlay"><div class="modal report" role="dialog" aria-modal="true">
+      ${h && h.week === s.week - 1 ? herald(h, true) : ''}
       <h2>Rapport · semaine ${s.week - 1}</h2>
       <ul class="log">${s.lastReport.map((e) => `<li class="tone-${e.tone}">${esc(e.text)}</li>`).join('')}</ul>
       <div class="actions"><button class="btn primary" data-act="close-report">${s.pendingEvent ? 'Suite' : 'Continuer'}</button></div>
@@ -447,10 +695,12 @@ function modals() {
 function rulesList() {
   return `
     <li>Une semaine par tour. Donne tes ordres, puis clique sur « Fin de semaine ».</li>
-    <li>Les rackets rapportent de l'argent <span class="dirty">sale</span>. Tes façades (blanchisserie, restaurant, garage) le transforment en argent <span class="clean">propre</span>, le seul qui paie les flics, les juges et les façades.</li>
-    <li>Poste tes hommes dans tes quartiers pour les défendre, et lance des assauts sur les quartiers voisins.</li>
-    <li>La heat attire les descentes. Au-delà de 85, les fédéraux peuvent t'arrêter. Seul un juge acheté te sauve.</li>
-    <li>Victoire : les 9 quartiers, ou 7 quartiers avec 100 de respect.</li>`;
+    <li><b>Alcool</b> : tes speakeasies vendent les caisses que tu leur fournis. Achète par le lac (moins cher, risqué) ou au grossiste, et revends en gros quand les prix flambent.</li>
+    <li><b>Coups</b> : chaque semaine, de nouvelles opportunités. Choisis l'équipe, la chance est affichée.</li>
+    <li><b>Commerçants</b> : règle le tarif de protection. Rends-leur service, ils te devront des faveurs.</li>
+    <li><b>Argent</b> : le <span class="dirty">sale</span> vient des rackets ; les façades le blanchissent en <span class="clean">propre</span>, qui paie flics, juges et élus.</li>
+    <li><b>Heat</b> : au-delà de 85, les fédéraux peuvent t'arrêter. Seul un juge acheté te sauve.</li>
+    <li><b>Victoire</b> : les 9 quartiers, ou 7 quartiers avec 100 de respect.</li>`;
 }
 
 // =====================================================================
@@ -462,7 +712,7 @@ function toast(msg: string) {
   ui.toastTimer = window.setTimeout(() => {
     ui.toast = '';
     render();
-  }, 2600);
+  }, 2800);
 }
 
 /** Double clic de confirmation (les dialogues natifs ne marchent pas partout) */
@@ -488,7 +738,7 @@ function run(r: E.ActionResult) {
 
 app.addEventListener('click', (ev) => {
   const el = (ev.target as HTMLElement).closest<HTMLElement>('[data-act]');
-  if (!el || el.tagName === 'SELECT' || (el as HTMLInputElement).type === 'checkbox') return;
+  if (!el || el.tagName === 'SELECT' || el.tagName === 'INPUT') return;
   const id = el.dataset.id ?? '';
   switch (el.dataset.act) {
     case 'select':
@@ -498,19 +748,41 @@ app.addEventListener('click', (ev) => {
       render();
       if (window.innerWidth <= 900) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
-    case 'tab': ui.tab = id as Tab; return render();
+    case 'tab':
+      ui.tab = id as Tab;
+      render();
+      if (window.innerWidth <= 900 && el.classList.contains('linkish')) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
     case 'build': return run(E.build(s, ui.selected, id as BusinessKind));
     case 'sell': return run(E.sellBusiness(s, ui.selected, Number(id)));
+    case 'tariff': return run(setTariff(s, ui.selected, id as Tariff));
     case 'cop': return run(E.toggleCop(s, id));
     case 'judge': return run(E.toggleJudge(s));
     case 'council': return run(E.toggleCouncil(s));
     case 'low': return run(E.toggleLowProfile(s));
+    case 'alibi': return run(favorAlibi(s));
+    case 'free': return run(favorFreePrisoner(s, Number(id)));
     case 'launder': return run(E.setLaunderRate(s, Number(id)));
-    case 'hire': return run(E.hire(s, Number(id)));
-    case 'fire': {
-      if (confirmed(`fire-${id}`)) run(E.fire(s, Number(id)));
-      return;
+    case 'qty': {
+      const g = id as Good;
+      ui.qty[g] = clamp(ui.qty[g] + Number(el.dataset.d), 0, 500);
+      return render();
     }
+    case 'escort': ui.escort = id as Escort; return render();
+    case 'fit': ui.qty[id as Good] = Math.max(0, B.freeRoom(s)); return render();
+    case 'smuggle': return run(B.orderSmuggle(s, id as Good, ui.qty[id as Good], ui.escort));
+    case 'wholesale': return run(B.buyWholesaler(s, id as Good, ui.qty[id as Good]));
+    case 'resale': return run(B.sellResale(s, id as Good, ui.qty[id as Good]));
+    case 'cancel-ship': return run(B.cancelShipment(s, Number(id)));
+    case 'sitdown': return run(D.sitDown(s, id));
+    case 'tribute': return run(D.payTribute(s, id));
+    case 'demand': return run(D.demandTribute(s, id));
+    case 'ally': return run(D.proposeAlliance(s, id));
+    case 'break': if (confirmed(`break-${id}`)) run(D.breakAlliance(s, id)); return;
+    case 'war': if (confirmed(`war-${id}`)) run(D.declareWar(s, id)); return;
+    case 'peace': return run(D.makePeace(s, id));
+    case 'hire': return run(E.hire(s, Number(id)));
+    case 'fire': if (confirmed(`fire-${id}`)) run(E.fire(s, Number(id))); return;
     case 'promote': return run(E.promote(s, Number(id)));
     case 'bonus': return run(E.payBonus(s, Number(id)));
     case 'assign': return run(E.assign(s, Number(id), el.dataset.to || null));
@@ -535,7 +807,7 @@ app.addEventListener('click', (ev) => {
       const name = (document.getElementById('fam') as HTMLInputElement | null)?.value.trim();
       if (name && name !== s.familyName) {
         s.familyName = name.startsWith('Famille') ? name : `Famille ${name}`;
-        s.log.forEach((e) => (e.text = e.text.replace(/^Famille \w+/, s.familyName)));
+        s.log.forEach((e) => (e.text = e.text.replace(/^Famille \S+/, s.familyName)));
       }
       ui.showIntro = false;
       return render();
@@ -545,7 +817,7 @@ app.addEventListener('click', (ev) => {
     // fallthrough
     case 'restart-confirm':
       clearSave();
-      s = newGame();
+      s = E.startGame();
       ui.selected = 'sicily';
       ui.tab = 'quartier';
       ui.attackers.clear();
@@ -562,6 +834,11 @@ app.addEventListener('change', (ev) => {
     const mid = Number(el.dataset.id);
     if ((el as HTMLInputElement).checked) ui.attackers.add(mid);
     else ui.attackers.delete(mid);
+    render();
+  } else if (act === 'job-pick') {
+    run(toggleJobMember(s, Number(el.dataset.job), Number(el.dataset.id)));
+  } else if (act === 'qty-input') {
+    ui.qty[el.dataset.id as Good] = clamp(Math.round(Number(el.value) || 0), 0, 500);
     render();
   } else if (act === 'assign-select' && el.value) {
     run(E.assign(s, Number(el.value), ui.selected));

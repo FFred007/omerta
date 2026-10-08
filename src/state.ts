@@ -1,8 +1,11 @@
-import { BUSINESSES, DISTRICT_SEEDS, FIRST_NAMES, LAST_NAMES, NICKNAMES, RIVAL_SEEDS } from './data';
-import type { District, GameState, Member, Owner, Recruit, LogTone } from './types';
+import {
+  BASE_STORAGE, BUSINESSES, DISTILLERY_GIN, DISTRICT_SEEDS, FIRST_NAMES, GOOD_ORDER, GOODS, LAST_NAMES, NICKNAMES,
+  RIVAL_SEEDS, SHOP_NAMES, SHOP_TRADES, SPEAKEASY_DEMAND, TARIFFS, TRIPOT_WHISKY,
+} from './data';
+import type { District, GameState, Good, Member, Owner, Recruit, LogTone, Shop } from './types';
 
-export const SAVE_KEY = 'omerta-save-v1';
-export const SAVE_VERSION = 1;
+export const SAVE_KEY = 'omerta-save-v2';
+export const SAVE_VERSION = 2;
 
 // ---------- RNG ----------
 export const rand = () => Math.random();
@@ -40,6 +43,13 @@ export function makeRecruit(s: GameState): Recruit {
   };
 }
 
+export function makeShop(s: GameState, used: Set<string>): Shop {
+  let owner = '';
+  for (let i = 0; i < 20 && (!owner || used.has(owner)); i++) owner = `${pick(FIRST_NAMES)} ${pick(SHOP_NAMES)}`;
+  used.add(owner);
+  return { id: nextId(s), owner, trade: pick(SHOP_TRADES), satisfaction: randInt(45, 65) };
+}
+
 function makeMember(s: GameState, partial: Partial<Member>): Member {
   return {
     id: nextId(s),
@@ -62,7 +72,7 @@ export function newGame(familyName = 'Famille Moretti'): GameState {
     version: SAVE_VERSION,
     familyName,
     week: 1,
-    dirty: 2500,
+    dirty: 3000,
     clean: 2000,
     respect: 10,
     heat: 10,
@@ -80,13 +90,27 @@ export function newGame(familyName = 'Famille Moretti'): GameState {
     nextId: 1,
     status: 'playing',
     endReason: '',
-    stats: { battlesWon: 0, battlesLost: 0, laundered: 0, raids: 0 },
+    stats: { battlesWon: 0, battlesLost: 0, laundered: 0, raids: 0, jobsDone: 0, cratesSold: 0 },
+    stock: { biere: 20, gin: 20, whisky: 5 },
+    market: { biere: 1, gin: 1, whisky: 1 },
+    marketTrend: { biere: 0, gin: 0, whisky: 0 },
+    shipments: [],
+    jobs: [],
+    favors: 0,
+    loans: [],
+    safeRouteWeeks: 0,
+    headlines: [],
+    news: [],
   };
+  const usedNames = new Set<string>();
   s.districts = DISTRICT_SEEDS.map((d) => ({
     ...d,
     bribedCop: false,
+    tariff: 'normal' as const,
+    shops: [],
     businesses: d.businesses.map((kind) => ({ id: nextId(s), kind })),
   }));
+  s.districts.forEach((d) => (d.shops = [makeShop(s, usedNames), makeShop(s, usedNames)]));
   s.members.push(
     makeMember(s, { name: 'Salvatore Greco', nickname: 'le Vieux', rank: 'capo', force: 6, discretion: 7, loyalty: 80, salary: 450, assignment: 'sicily' }),
     makeMember(s, { force: 6, discretion: 4, loyalty: 70, salary: 230, assignment: 'sicily' }),
@@ -127,6 +151,19 @@ export function clearSave() {
 }
 
 // ---------- Helpers ----------
+/** Paie en argent sale d'abord, puis en propre. Retourne false si les deux ne suffisent pas. */
+export function payAny(s: GameState, amount: number): boolean {
+  if (s.dirty + s.clean < amount) return false;
+  const d = Math.min(s.dirty, amount);
+  s.dirty -= d;
+  s.clean -= amount - d;
+  return true;
+}
+
+export function news(s: GameState, prio: number, title: string, sub = '') {
+  s.news.push({ prio, title, sub });
+}
+
 export function log(s: GameState, tone: LogTone, text: string) {
   s.log.unshift({ week: s.week, tone, text });
   if (s.log.length > 200) s.log.length = 200;
@@ -151,8 +188,10 @@ export function membersIn(s: GameState, districtId: string) {
 }
 
 export function committedToAttack(s: GameState, memberId: number) {
-  return s.orders.some((o) => o.memberIds.includes(memberId));
+  return s.orders.some((o) => o.memberIds.includes(memberId)) || s.jobs.some((j) => j.team.includes(memberId));
 }
+export const onJob = (s: GameState, memberId: number) => s.jobs.find((j) => j.team.includes(memberId));
+export const onAttack = (s: GameState, memberId: number) => s.orders.find((o) => o.memberIds.includes(memberId));
 
 /** Défense d'un quartier (pour le joueur : hommes postés, hors ceux engagés en attaque) */
 export function defenseOf(s: GameState, d: District): number {
@@ -192,20 +231,80 @@ export function winChance(power: number, def: number): number {
   return acc / steps;
 }
 
-export function hasDistillery(s: GameState) {
-  return owned(s).some((d) => d.businesses.some((b) => b.kind === 'distillerie'));
+export function storageCap(s: GameState) {
+  return BASE_STORAGE + owned(s).reduce((t, d) => t + d.businesses.reduce((u, b) => u + (BUSINESSES[b.kind].storage ?? 0), 0), 0);
 }
-
-export function businessIncome(s: GameState, d: District, kind: string): number {
-  const def = BUSINESSES[kind as keyof typeof BUSINESSES];
-  let inc = def.income;
-  if (kind === 'speakeasy' && hasDistillery(s)) inc *= 1.4;
-  if (kind === 'distillerie' && d.id === 'docks') inc *= 2;
-  return Math.round(inc);
-}
+export const stockTotal = (s: GameState) => GOOD_ORDER.reduce((t, g) => t + s.stock[g], 0);
+export const pendingCrates = (s: GameState) => s.shipments.reduce((t, x) => t + x.qty, 0);
 
 export function capoBonus(s: GameState, d: District) {
   return membersIn(s, d.id).some((m) => m.rank === 'capo') ? 1.2 : 1;
+}
+
+export function satisfaction(d: District) {
+  return d.shops.length ? Math.round(d.shops.reduce((t, x) => t + x.satisfaction, 0) / d.shops.length) : 50;
+}
+
+/** Revenu de protection d'un quartier : tarif × humeur des commerçants */
+export function racketOf(d: District) {
+  const sat = satisfaction(d);
+  const mood = sat < 30 ? 0.6 : 1;
+  return Math.round(d.racket * TARIFFS[d.tariff].mult * mood);
+}
+
+export const retailPrice = (d: District, g: Good) => Math.round(GOODS[g].retail * d.wealth);
+
+export interface OutletSale { districtId: string; kind: 'speakeasy' | 'tripot'; sold: Partial<Record<Good, number>>; revenue: number; demand: number }
+export interface SalesPlan {
+  produced: number; // gin des distilleries (après plafond de stockage)
+  sold: Record<Good, number>;
+  revenue: number; // avant bonus capo / pacification
+  outlets: OutletSale[];
+  shortage: number; // caisses demandées mais introuvables
+  stockAfter: Record<Good, number>;
+}
+
+/** Production et ventes d'alcool de la semaine, déterministes (utilisées par les prévisions et le moteur) */
+export function salesPlan(s: GameState): SalesPlan {
+  const stock = { ...s.stock };
+  let produced = 0;
+  if (!s.lowProfile) {
+    for (const d of owned(s)) {
+      for (const b of d.businesses) if (b.kind === 'distillerie') produced += DISTILLERY_GIN * (d.id === 'docks' ? 2 : 1);
+    }
+  }
+  const room = Math.max(0, storageCap(s) - GOOD_ORDER.reduce((t, g) => t + stock[g], 0));
+  produced = Math.min(produced, room);
+  stock.gin += produced;
+
+  const sold: Record<Good, number> = { biere: 0, gin: 0, whisky: 0 };
+  const outlets: OutletSale[] = [];
+  let revenue = 0;
+  let shortage = 0;
+  if (!s.lowProfile) {
+    for (const d of owned(s)) {
+      for (const b of d.businesses) {
+        if (b.kind !== 'speakeasy' && b.kind !== 'tripot') continue;
+        const demand = b.kind === 'speakeasy' ? SPEAKEASY_DEMAND : TRIPOT_WHISKY;
+        const goods: Good[] = b.kind === 'speakeasy' ? GOOD_ORDER : ['whisky'];
+        const o: OutletSale = { districtId: d.id, kind: b.kind, sold: {}, revenue: 0, demand };
+        let left = demand;
+        for (const g of goods) {
+          const q = Math.min(left, stock[g]);
+          if (!q) continue;
+          stock[g] -= q;
+          sold[g] += q;
+          left -= q;
+          o.sold[g] = q;
+          o.revenue += q * retailPrice(d, g);
+        }
+        if (b.kind === 'speakeasy') shortage += left;
+        revenue += o.revenue;
+        outlets.push(o);
+      }
+    }
+  }
+  return { produced, sold, revenue, outlets, shortage, stockAfter: stock };
 }
 
 /** Projection de la semaine (utilisée par l'UI et par le moteur) */
@@ -214,13 +313,18 @@ export function projection(s: GameState) {
   let cleanIn = 0;
   let launderCap = 0;
   let heatGain = 0;
+  let racket = 0;
+  let fixed = 0;
+  let booze = 0;
+  const plan = salesPlan(s);
   for (const d of owned(s)) {
     const mult = capoBonus(s, d) * ((d.unrest ?? 0) > 0 ? 0.5 : 1);
-    let districtDirty = s.lowProfile ? 0 : d.racket;
+    const r = s.lowProfile ? 0 : racketOf(d);
+    let f = 0;
     for (const b of d.businesses) {
       const def = BUSINESSES[b.kind];
       if (def.illegal) {
-        if (!s.lowProfile) districtDirty += businessIncome(s, d, b.kind);
+        if (!s.lowProfile) f += def.income;
         heatGain += s.lowProfile ? 0 : def.heat * (d.bribedCop ? 0.5 : 1);
       } else {
         cleanIn += def.income;
@@ -228,11 +332,15 @@ export function projection(s: GameState) {
         heatGain += def.heat;
       }
     }
-    dirtyIn += Math.round(districtDirty * mult);
+    const sales = plan.outlets.filter((o) => o.districtId === d.id).reduce((t, o) => t + o.revenue, 0);
+    racket += Math.round(r * mult);
+    fixed += Math.round(f * mult);
+    booze += Math.round(sales * mult);
   }
+  dirtyIn = racket + fixed + booze;
   if (s.councilman) launderCap = Math.round(launderCap * 1.25);
   const salaries = activeMembers(s).reduce((t, m) => t + m.salary, 0) + s.members.filter((m) => m.status !== 'actif').reduce((t, m) => t + Math.round(m.salary / 2), 0);
   const bribes =
     owned(s).filter((d) => d.bribedCop).length * 300 + (s.judge ? 800 : 0) + (s.councilman ? 1200 : 0);
-  return { dirtyIn, cleanIn, launderCap, heatGain: Math.round(heatGain), salaries, bribes };
+  return { dirtyIn, racket, fixed, booze, cleanIn, launderCap, heatGain: Math.round(heatGain), salaries, bribes, plan };
 }

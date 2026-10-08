@@ -1,9 +1,14 @@
 import { BUSINESSES, COUNCIL_BRIBE, DIRTY_STASH_LIMIT, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE_COST } from './data';
 import { rollEvent } from './events';
+import { marketTick, resolveShipments } from './booze';
+import { publishHerald, relationsTick } from './diplomacy';
+import { generateJobs, resolveJobs } from './jobs';
+import { onConquest, raidMood, shopsTick } from './shops';
 import {
   activeMembers, attackPower, chance, roll, winChance, clamp, committedToAttack, defenseOf, district, isAttackable, log,
-  makeRecruit, membersIn, neighbors, nextId, owned, pick, projection, rand, randInt, rival,
+  makeRecruit, membersIn, neighbors, newGame, news, nextId, owned, pick, projection, rand, randInt, rival, satisfaction,
 } from './state';
+import { GOOD_ORDER, GOODS } from './data';
 import type { BusinessKind, District, GameState, LogEntry, Member, RivalFamily } from './types';
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -11,8 +16,9 @@ const ok: ActionResult = { ok: true };
 const fail = (error: string): ActionResult => ({ ok: false, error });
 
 export const JUDGE_MIN_RESPECT = 15;
-export const RIVAL_STRENGTH_COST = 900;
+export const RIVAL_STRENGTH_COST = 1000;
 export const COUNCIL_MIN_RESPECT = 35;
+export const HEAT_DECAY = 4;
 
 // =====================================================================
 // Actions du joueur
@@ -86,6 +92,7 @@ export function fire(s: GameState, memberId: number): ActionResult {
   s.members = s.members.filter((x) => x.id !== memberId);
   s.orders.forEach((o) => (o.memberIds = o.memberIds.filter((id) => id !== memberId)));
   s.orders = s.orders.filter((o) => o.memberIds.length);
+  s.jobs.forEach((j) => (j.team = j.team.filter((id) => id !== memberId)));
   if (m.loyalty < 50) {
     s.heat = clamp(s.heat + 6, 0, 100);
     log(s, 'police', `${m.nickname} est parti fâché. Il parle un peu trop dans les bars (+6 heat).`);
@@ -133,6 +140,8 @@ export function orderAttack(s: GameState, districtId: string, memberIds: number[
   if (s.members.some((m) => memberIds.includes(m.id) && (m.fatigue ?? 0) > 0)) return fail('Certains hommes récupèrent encore du dernier assaut.');
   const r = d.owner !== 'neutral' ? rival(s, d.owner) : undefined;
   if (r && r.truceWeeks > 0) return fail(`Tu as une trêve avec ${r.name} (${r.truceWeeks} sem.).`);
+  if (r && r.alliance) return fail(`Tu es allié avec ${r.name}. Romps l'alliance d'abord (onglet Rivaux).`);
+  s.jobs.forEach((j) => (j.team = j.team.filter((id) => !memberIds.includes(id))));
   s.orders = s.orders.filter((o) => o.districtId !== districtId);
   s.orders.forEach((o) => (o.memberIds = o.memberIds.filter((id) => !memberIds.includes(id))));
   s.orders = s.orders.filter((o) => o.memberIds.length);
@@ -155,6 +164,12 @@ export function toggleLowProfile(s: GameState): ActionResult {
   return ok;
 }
 
+export function startGame(familyName?: string) {
+  const s = newGame(familyName);
+  generateJobs(s);
+  return s;
+}
+
 // =====================================================================
 // Fin de semaine
 // =====================================================================
@@ -166,23 +181,30 @@ export function endTurn(s: GameState): LogEntry[] {
 
   const conquered = new Set<string>();
   resolvePlayerAttacks(s, conquered);
+  resolveJobs(s);
   economy(s);
+  resolveShipments(s);
   resolveRaids(s, raidedDistricts);
+  marketTick(s);
   rivalsTurn(s, conquered);
+  relationsTick(s);
+  shopsTick(s);
   crewTurn(s, raidedDistricts);
   donArrestCheck(s);
   checkEnd(s);
+  publishHerald(s);
 
   s.lastReport = s.log.filter((e) => e.week === week).reverse();
   s.orders = [];
   s.lowProfile = false;
   s.week += 1;
+  generateJobs(s);
 
   // renouvellement des recrues
   if (s.recruits.length >= 3) s.recruits.splice(randInt(0, s.recruits.length - 1), 1);
   while (s.recruits.length < 3) s.recruits.push(makeRecruit(s));
 
-  if (s.status === 'playing' && chance(0.45)) s.pendingEvent = rollEvent(s);
+  if (s.status === 'playing' && chance(0.55)) s.pendingEvent = rollEvent(s);
   return s.lastReport;
 }
 
@@ -212,8 +234,15 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
       d.bribedCop = false;
       d.garrison = 0;
       d.unrest = 3;
-      if (r) r.strength = Math.max(3, r.strength - Math.ceil(defBase * 0.35));
-      s.respect = clamp(s.respect + (r ? 5 : 3), 0, 150);
+      if (r) {
+        r.strength = Math.max(3, r.strength - Math.ceil(defBase * 0.35));
+        r.relation = clamp(r.relation - 30, -100, 100);
+      }
+      s.respect = clamp(s.respect + (r ? (r.war ? 7 : 5) : 3), 0, 150);
+      onConquest(s, d.id);
+      news(s, r ? 5 : 4, `${d.name} change de mains`, r
+        ? `Nuit de fusillades : les hommes de ${r.boss} chassés par la ${s.familyName}.`
+        : `Les petites frappes de ${d.name} se rangent derrière la ${s.familyName}.`);
       // les hommes de réserve tiennent le nouveau quartier, les autres rentrent à leur poste
       const holders = men.filter((m) => !m.assignment);
       men.forEach((m) => (m.loyalty = clamp(m.loyalty + 4, 0, 100)));
@@ -224,7 +253,10 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
     } else {
       s.stats.battlesLost++;
       s.respect = clamp(s.respect - 3, 0, 150);
-      if (r) r.strength = Math.max(3, r.strength - 1);
+      if (r) {
+        r.strength = Math.max(3, r.strength - 1);
+        r.relation = clamp(r.relation - 15, -100, 100);
+      }
       else d.garrison += 1;
       log(s, 'bad', `L'assaut sur ${target} tourne mal ${dice}. Tes hommes se replient.`);
       casualties(s, men, 0.35 * ratio, 0.12 * ratio);
@@ -303,7 +335,16 @@ function economy(s: GameState) {
   s.dirty += f.dirtyNet;
   s.clean += f.cleanNet;
   s.stats.laundered += f.launderGiven;
-  if (f.dirtyIn) log(s, 'money', `Les rackets rapportent ${fmt(f.dirtyIn)} d'argent sale.`);
+  s.stock = { ...p.plan.stockAfter };
+  const crates = GOOD_ORDER.reduce((a, g) => a + p.plan.sold[g], 0);
+  s.stats.cratesSold += crates;
+  if (p.plan.produced) log(s, 'money', `Tes distilleries produisent ${p.plan.produced} caisses de gin.`);
+  if (p.racket) log(s, 'money', `La protection rapporte ${fmt(p.racket)} d'argent sale.`);
+  if (crates) {
+    const detail = GOOD_ORDER.filter((g) => p.plan.sold[g]).map((g) => `${p.plan.sold[g]} ${GOODS[g].plural}`).join(', ');
+    log(s, 'money', `Tes établissements écoulent ${crates} caisses (${detail}) : +${fmt(p.booze)}.`);
+  }
+  if (p.plan.shortage) log(s, 'bad', `Rupture de stock : ${p.plan.shortage} caisses manquaient dans tes speakeasies. Des clients sont partis chez la concurrence.`);
   if (s.lowProfile) log(s, 'neutral', 'Profil bas : tous les commerces illégaux sont restés fermés.');
   if (f.launderTaken > 0) log(s, 'money', `${fmt(f.launderTaken)} d'argent sale blanchis via tes façades (+${fmt(f.launderGiven)} propre).`);
 
@@ -323,7 +364,7 @@ function economy(s: GameState) {
   }
 
   // heat
-  let heat = p.heatGain - 3;
+  let heat = p.heatGain - HEAT_DECAY;
   if (s.dirty > DIRTY_STASH_LIMIT) {
     const extra = Math.ceil((s.dirty - DIRTY_STASH_LIMIT) / 5000);
     heat += extra;
@@ -344,7 +385,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
   for (const d of owned(s)) {
     const illegal = d.businesses.filter((b) => BUSINESSES[b.kind].illegal);
     if (!illegal.length) continue;
-    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police;
+    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d));
     if (d.bribedCop) p *= 0.3;
     if (s.lowProfile) p *= 0.3;
     if (!chance(p)) continue;
@@ -355,8 +396,15 @@ function resolveRaids(s: GameState, raided: Set<string>) {
     d.businesses = d.businesses.filter((x) => x.id !== b.id);
     const seized = Math.min(s.dirty, 400 * d.police);
     s.dirty -= seized;
+    let crates = 0;
+    for (const g of GOOD_ORDER) {
+      const q = Math.floor(s.stock[g] * 0.15);
+      s.stock[g] -= q;
+      crates += q;
+    }
     s.heat = clamp(s.heat - 8, 0, 100);
-    log(s, 'police', `Descente à ${d.name} ! ${BUSINESSES[b.kind].name} fermé(e), ${fmt(seized)} saisis.`);
+    log(s, 'police', `Descente à ${d.name} ! ${BUSINESSES[b.kind].name} fermé(e), ${fmt(seized)} et ${crates} caisses saisis.`);
+    news(s, 4, `Descente des Prohis à ${d.name}`, `Un ${BUSINESSES[b.kind].name.toLowerCase()} fermé, l'alcool versé dans le caniveau sous les huées.`);
     for (const m of membersIn(s, d.id)) {
       if (chance((11 - m.discretion) * 0.05)) {
         m.status = 'prison';
@@ -378,6 +426,7 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
       r.alive = false;
       s.respect = clamp(s.respect + 6, 0, 150);
       log(s, 'good', `${r.name} n'a plus aucun territoire. ${r.boss} a fui la ville.`);
+      news(s, 5, `${r.boss} quitte New Corrano`, `Aperçu à la gare avec trois valises. La ${r.name} n'existe plus.`);
       continue;
     }
     // revenus et recrutement
@@ -389,13 +438,18 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     }
     if (r.truceWeeks > 0) r.truceWeeks--;
 
-    // attaque
-    if (s.week < 5 || !chance(r.aggression * 0.6)) continue;
-    const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter(
-      (d) => d.owner !== r.id && !conquered.has(d.id) && !(d.owner === 'player' && r.truceWeeks > 0),
-    );
+    // attaque : la relation avec le joueur décide s'il est une cible
+    const aggression = r.aggression * 0.6 * (r.war ? 1.6 : 1);
+    if (s.week < 5 || !chance(aggression)) continue;
+    const spareFriend = !r.war && r.relation > 30 && chance(0.8);
+    const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter((d) => {
+      if (d.owner === r.id || conquered.has(d.id)) return false;
+      if (d.owner === 'player') return !r.alliance && r.truceWeeks === 0 && !spareFriend;
+      return true;
+    });
     if (!targets.length) continue;
-    targets.sort((a, b) => defenseOf(s, a) - defenseOf(s, b) + (b.racket - a.racket) / 400);
+    const score = (d: District) => defenseOf(s, d) - d.racket / 400 - (r.war && d.owner === 'player' ? 8 : 0);
+    targets.sort((a, b) => score(a) - score(b));
     const target = chance(0.7) ? targets[0] : pick(targets);
     rivalAttack(s, r, target);
   }
@@ -417,6 +471,7 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
       s.respect = clamp(s.respect - 6, 0, 150);
       s.stats.battlesLost++;
       log(s, 'bad', `${r.name} attaque et s'empare de ${d.name} !`);
+      news(s, 5, `${d.name} tombe aux mains de ${r.name}`, `Les hommes de ${r.boss} ont surpris la garde de la ${s.familyName}.`);
       casualties(s, defenders, 0.45, 0.15);
       defenders.forEach((m) => (m.assignment = null));
     } else {
@@ -438,6 +493,7 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
       const loser = rival(s, prev)!;
       loser.strength = Math.max(3, loser.strength - 3);
       log(s, 'neutral', `Guerre des gangs : ${r.name} prend ${d.name} à ${loser.name}.`);
+      news(s, 3, `Guerre des gangs à ${d.name}`, `${r.name} chasse ${loser.name} du quartier. Bilan : quatre morts et un tramway criblé de balles.`);
     } else {
       log(s, 'neutral', `${r.name} s'installe à ${d.name}.`);
     }
@@ -484,6 +540,7 @@ function betray(s: GameState, m: Member) {
   } else {
     s.heat = clamp(s.heat + 18, 0, 100);
     log(s, 'police', `Trahison ! ${m.name} « ${m.nickname} » s'est mis à table avec la police (+18 heat).`);
+    news(s, 4, 'Un repenti parle au procureur', `${m.name}, dit « ${m.nickname} », livrerait les secrets de la ${s.familyName}.`);
   }
 }
 

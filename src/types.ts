@@ -8,7 +8,8 @@ export type BusinessKind =
   | 'paris'
   | 'blanchisserie'
   | 'restaurant'
-  | 'garage';
+  | 'garage'
+  | 'entrepot';
 
 export interface BusinessDef {
   kind: BusinessKind;
@@ -21,6 +22,7 @@ export interface BusinessDef {
   launder: number; // capacité de blanchiment / semaine
   heat: number; // heat ajoutée chaque semaine
   desc: string;
+  storage?: number; // capacité de stockage d'alcool ajoutée
 }
 
 export interface Business {
@@ -44,6 +46,70 @@ export interface District {
   /** semaines de pacification après une conquête */
   unrest?: number;
   flavor: string;
+  shops: Shop[];
+  tariff: Tariff;
+  /** richesse de la clientèle : multiplie le prix de vente au verre */
+  wealth: number;
+}
+
+export type Tariff = 'bas' | 'normal' | 'eleve';
+
+export interface Shop {
+  id: number;
+  owner: string; // « Giuseppe Colombo »
+  trade: string; // « boulanger »
+  satisfaction: number; // 0..100
+}
+
+// ---------- Alcool ----------
+export type Good = 'biere' | 'gin' | 'whisky';
+
+export interface Shipment {
+  id: number;
+  good: Good;
+  qty: number;
+  escort: Escort;
+  paid: number;
+}
+export type Escort = 'aucune' | 'legere' | 'forte';
+
+// ---------- Coups ----------
+export type JobStat = 'force' | 'discretion';
+export interface JobReward {
+  dirty?: number;
+  clean?: number;
+  crates?: { good: Good; qty: number };
+  respect?: number;
+  heat?: number; // variation de heat en cas de succès (négatif = baisse)
+  rivalHit?: number; // force retirée au rival ciblé
+  burnBusiness?: boolean; // détruit un établissement du rival
+}
+export interface Job {
+  id: number;
+  key: string;
+  title: string;
+  text: string;
+  stat: JobStat;
+  difficulty: number;
+  minMen: number;
+  reward: JobReward;
+  failHeat: number;
+  danger: number; // 0..1 : gravité des conséquences en cas d'échec
+  rivalId?: string;
+  relationHit?: number;
+  team: number[];
+}
+
+export interface Loan {
+  due: number; // semaine de remboursement
+  amount: number;
+  shop: string;
+}
+
+export interface Headline {
+  week: number;
+  title: string;
+  sub: string;
 }
 
 export type Rank = 'soldat' | 'capo';
@@ -87,6 +153,10 @@ export interface RivalFamily {
   aggression: number; // 0..1
   truceWeeks: number;
   alive: boolean;
+  relation: number; // -100..100 envers le joueur
+  alliance: boolean;
+  war: boolean;
+  talkCooldown: number;
 }
 
 export interface AttackOrder {
@@ -134,11 +204,22 @@ export interface GameState {
   lowProfile: boolean; // profil bas cette semaine
   /** part de la capacité de blanchiment utilisée : 1 = max, 0.5 = moitié, 0 = rien */
   launderRate?: number;
+  stock: Record<Good, number>;
+  market: Record<Good, number>; // multiplicateur de prix du marché (0,55..1,9)
+  marketTrend: Record<Good, number>;
+  shipments: Shipment[];
+  jobs: Job[];
+  favors: number;
+  loans: Loan[];
+  safeRouteWeeks: number;
+  headlines: Headline[];
+  news: { prio: number; title: string; sub: string }[];
+  lastEventKey?: string;
   pendingEvent: PendingEvent | null;
   log: LogEntry[];
   lastReport: LogEntry[];
   nextId: number;
   status: 'playing' | 'won' | 'lost';
   endReason: string;
-  stats: { battlesWon: number; battlesLost: number; laundered: number; raids: number };
+  stats: { battlesWon: number; battlesLost: number; laundered: number; raids: number; jobsDone: number; cratesSold: number };
 }

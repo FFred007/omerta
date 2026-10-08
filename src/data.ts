@@ -1,22 +1,22 @@
-import type { BusinessDef, BusinessKind, District, RivalFamily } from './types';
+import type { BusinessDef, BusinessKind, District, Good, RivalFamily, Tariff } from './types';
 
 export const START_YEAR = 1925;
 
 export const BUSINESSES: Record<BusinessKind, BusinessDef> = {
   speakeasy: {
     kind: 'speakeasy', name: 'Speakeasy', illegal: true, cost: 1500, currency: 'dirty',
-    income: 550, launder: 0, heat: 2,
-    desc: "Bar clandestin. Rapporte bien, encore plus avec une distillerie dans la famille.",
+    income: 180, launder: 0, heat: 2,
+    desc: "Bar clandestin. Vend jusqu'à 18 caisses de ton stock par semaine, plus cher dans les beaux quartiers.",
   },
   tripot: {
     kind: 'tripot', name: 'Tripot', illegal: true, cost: 2500, currency: 'dirty',
-    income: 850, launder: 0, heat: 3,
-    desc: 'Salle de jeu clandestine. Gros revenus, attire la police.',
+    income: 820, launder: 0, heat: 3,
+    desc: 'Salle de jeu clandestine. Gros revenus fixes, sert aussi 5 caisses de whisky par semaine.',
   },
   distillerie: {
     kind: 'distillerie', name: 'Distillerie', illegal: true, cost: 3000, currency: 'dirty',
-    income: 350, launder: 0, heat: 3,
-    desc: '+40 % de revenus pour tous tes speakeasies. Double rendement aux Docks.',
+    income: 0, launder: 0, heat: 3,
+    desc: 'Produit 25 caisses de gin par semaine (50 aux Docks, grâce à l\'eau du port).',
   },
   paris: {
     kind: 'paris', name: 'Paris clandestins', illegal: true, cost: 1200, currency: 'dirty',
@@ -38,7 +38,56 @@ export const BUSINESSES: Record<BusinessKind, BusinessDef> = {
     income: 100, launder: 600, heat: 0,
     desc: 'Blanchit et sert de planque : +5 défense dans le quartier.',
   },
+  entrepot: {
+    kind: 'entrepot', name: 'Entrepôt', illegal: false, cost: 1800, currency: 'clean',
+    income: 0, launder: 200, heat: 0, storage: 80,
+    desc: '+80 caisses de stockage. Officiellement, des pièces détachées.',
+  },
 };
+
+// ---------- Alcool ----------
+export interface GoodDef { id: Good; name: string; plural: string; base: number; retail: number }
+export const GOODS: Record<Good, GoodDef> = {
+  biere: { id: 'biere', name: 'Bière', plural: 'bière', base: 20, retail: 36 },
+  gin: { id: 'gin', name: 'Gin', plural: 'gin', base: 40, retail: 72 },
+  whisky: { id: 'whisky', name: 'Whisky', plural: 'whisky', base: 80, retail: 135 },
+};
+export const GOOD_ORDER: Good[] = ['whisky', 'gin', 'biere']; // ordre de vente au comptoir
+export const BASE_STORAGE = 60;
+export const SPEAKEASY_DEMAND = 18;
+export const TRIPOT_WHISKY = 5;
+export const DISTILLERY_GIN = 25;
+/** contrebande (livrée en fin de semaine, risquée) vs grossiste (immédiat, sûr) vs revente en gros */
+export const PRICE_SMUGGLE = 0.6;
+export const PRICE_WHOLESALER = 0.9;
+export const PRICE_RESALE = 0.8;
+export const ESCORTS = {
+  aucune: { name: 'Sans escorte', cost: 0, risk: 1 },
+  legere: { name: 'Escorte légère', cost: 150, risk: 0.5 },
+  forte: { name: 'Escorte armée', cost: 450, risk: 0.2 },
+} as const;
+
+// ---------- Commerçants ----------
+export const TARIFFS: Record<Tariff, { name: string; mult: number; drift: number }> = {
+  bas: { name: 'Bas', mult: 0.7, drift: 5 },
+  normal: { name: 'Normal', mult: 1, drift: 1 },
+  eleve: { name: 'Élevé', mult: 1.35, drift: -5 },
+};
+export const SHOP_TRADES = [
+  'boulanger', 'tailleur', 'barbier', 'épicier', 'bijoutier', 'cordonnier', 'boucher', 'fleuriste',
+  'prêteur sur gages', 'garagiste', 'pharmacien', 'marchand de journaux', 'cafetier', 'fourreur',
+];
+export const SHOP_NAMES = [
+  'Colombo', 'Abramowitz', "O'Hara", 'Kowalski', 'Benedetti', 'Schultz', 'Moreau', 'Papadakis',
+  'Lindqvist', 'Novak', 'Delgado', 'Fitzgerald', 'Rossi', 'Weinberg', 'Kaminski', 'Lombardo', 'Brennan', 'Hartmann',
+];
+
+export const RANKS: [number, string][] = [
+  [0, 'Petite bande'], [15, 'Famille de quartier'], [35, 'Famille établie'], [60, 'Grande famille'], [100, 'Capo dei Capi'],
+];
+export function rankOf(respect: number) {
+  return [...RANKS].reverse().find(([min]) => respect >= min)![1];
+}
 
 export const LAUNDER_FEE = 0.15;
 export const COP_BRIBE = 300; // propre / semaine
@@ -47,36 +96,36 @@ export const COUNCIL_BRIBE = 1200;
 export const PROMOTE_COST = 1000;
 export const DIRTY_STASH_LIMIT = 10000;
 
-type DistrictSeed = Omit<District, 'businesses' | 'bribedCop'> & { businesses: BusinessKind[] };
+type DistrictSeed = Omit<District, 'businesses' | 'bribedCop' | 'shops' | 'tariff'> & { businesses: BusinessKind[] };
 
 export const DISTRICT_SEEDS: DistrictSeed[] = [
-  { id: 'lac', name: 'Bord du Lac', row: 0, col: 0, owner: 'castellano', racket: 900, police: 2, slots: 3, garrison: 0, businesses: ['tripot'],
+  { id: 'lac', wealth: 1.35, name: 'Bord du Lac', row: 0, col: 0, owner: 'castellano', racket: 900, police: 2, slots: 3, garrison: 0, businesses: ['tripot'],
     flavor: 'Villas, yachts et dames en fourrure. Les Castellano y reçoivent les notables.' },
-  { id: 'loop', name: 'Le Loop', row: 0, col: 1, owner: 'castellano', racket: 1000, police: 3, slots: 4, garrison: 0, businesses: ['speakeasy', 'restaurant'],
+  { id: 'loop', wealth: 1.3, name: 'Le Loop', row: 0, col: 1, owner: 'castellano', racket: 1000, police: 3, slots: 4, garrison: 0, businesses: ['speakeasy', 'restaurant'],
     flavor: "Le cœur financier. Banques, théâtres, et un flic à chaque coin de rue." },
-  { id: 'gare', name: 'Gare Union', row: 0, col: 2, owner: 'neutral', racket: 650, police: 2, slots: 3, garrison: 13, businesses: [],
+  { id: 'gare', wealth: 1.1, name: 'Gare Union', row: 0, col: 2, owner: 'neutral', racket: 650, police: 2, slots: 3, garrison: 13, businesses: [],
     flavor: 'Trains de nuit, voyageurs pressés, marchandises qui ne figurent sur aucun registre.' },
-  { id: 'polonais', name: 'Quartier Polonais', row: 1, col: 0, owner: 'wolska', racket: 500, police: 1, slots: 3, garrison: 0, businesses: ['distillerie'],
+  { id: 'polonais', wealth: 0.95, name: 'Quartier Polonais', row: 1, col: 0, owner: 'wolska', racket: 500, police: 1, slots: 3, garrison: 0, businesses: ['distillerie'],
     flavor: 'Églises en brique et caves pleines de vodka. Le clan Wolska veille.' },
-  { id: 'hdv', name: 'Hôtel de Ville', row: 1, col: 1, owner: 'neutral', racket: 750, police: 3, slots: 2, garrison: 17, businesses: [],
+  { id: 'hdv', wealth: 1.2, name: 'Hôtel de Ville', row: 1, col: 1, owner: 'neutral', racket: 750, police: 3, slots: 2, garrison: 17, businesses: [],
     flavor: "Le siège du pouvoir. Qui tient ce quartier tient les élus." },
-  { id: 'sicily', name: 'Little Sicily', row: 1, col: 2, owner: 'player', racket: 600, police: 1, slots: 3, garrison: 0, businesses: ['speakeasy'],
+  { id: 'sicily', wealth: 1.0, name: 'Little Sicily', row: 1, col: 2, owner: 'player', racket: 600, police: 1, slots: 3, garrison: 0, businesses: ['speakeasy'],
     flavor: "Chez toi. Les vieux t'appellent encore « le neveu »." },
-  { id: 'abattoirs', name: 'Les Abattoirs', row: 2, col: 0, owner: 'wolska', racket: 400, police: 1, slots: 3, garrison: 0, businesses: ['paris'],
+  { id: 'abattoirs', wealth: 0.85, name: 'Les Abattoirs', row: 2, col: 0, owner: 'wolska', racket: 400, police: 1, slots: 3, garrison: 0, businesses: ['paris'],
     flavor: "L'odeur du sang et de l'argent facile. Personne ne pose de questions ici." },
-  { id: 'southside', name: 'Southside', row: 2, col: 1, owner: 'neutral', racket: 450, police: 1, slots: 3, garrison: 10, businesses: [],
+  { id: 'southside', wealth: 1.0, name: 'Southside', row: 2, col: 1, owner: 'neutral', racket: 450, police: 1, slots: 3, garrison: 10, businesses: [],
     flavor: "Clubs de jazz et petites frappes indépendantes. Mûr pour être organisé." },
-  { id: 'docks', name: 'Les Docks', row: 2, col: 2, owner: 'kilbride', racket: 700, police: 2, slots: 3, garrison: 0, businesses: ['speakeasy'],
+  { id: 'docks', wealth: 0.9, name: 'Les Docks', row: 2, col: 2, owner: 'kilbride', racket: 700, police: 2, slots: 3, garrison: 0, businesses: ['speakeasy'],
     flavor: "Le whisky canadien arrive par ici. Les Irlandais de Kilbride tiennent les quais." },
 ];
 
 export const RIVAL_SEEDS: RivalFamily[] = [
   { id: 'castellano', name: 'Famille Castellano', boss: 'Don Aurelio Castellano', color: '#b33a3a',
-    strength: 20, money: 6000, aggression: 0.35, truceWeeks: 0, alive: true },
+    strength: 20, money: 6000, aggression: 0.35, truceWeeks: 0, alive: true, relation: -5, alliance: false, war: false, talkCooldown: 0 },
   { id: 'kilbride', name: 'Irlandais de Kilbride', boss: 'Seamus « le Rouquin » Kilbride', color: '#3f8f5a',
-    strength: 13, money: 3000, aggression: 0.55, truceWeeks: 0, alive: true },
+    strength: 13, money: 3000, aggression: 0.55, truceWeeks: 0, alive: true, relation: -25, alliance: false, war: false, talkCooldown: 0 },
   { id: 'wolska', name: 'Clan Wolska', boss: 'Tadeusz Wolski', color: '#4a6fb3',
-    strength: 15, money: 3500, aggression: 0.4, truceWeeks: 0, alive: true },
+    strength: 15, money: 3500, aggression: 0.4, truceWeeks: 0, alive: true, relation: 5, alliance: false, war: false, talkCooldown: 0 },
 ];
 
 export const FIRST_NAMES = [

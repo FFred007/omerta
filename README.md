@@ -1,6 +1,6 @@
 # Omertà
 
-Jeu de gestion de mafia au tour par tour dans le navigateur. New Corrano, 1925, en pleine Prohibition : tu reprends une petite famille et tu dois devenir le Capo dei Capi.
+Jeu de gestion de mafia au tour par tour dans le navigateur. New Corrano, 1925, en pleine Prohibition : tu reprends une petite famille, tu fais tourner la contrebande, tu montes des coups, tu tiens tes commerçants et tu manœuvres entre les familles pour devenir le Capo dei Capi.
 
 ## Jouer en local
 
@@ -17,35 +17,45 @@ npm run build   # vérifie les types puis génère dist/
 
 Sur Vercel, importer le repo : le preset Vite est détecté automatiquement (build `npm run build`, sortie `dist`). Aucune variable d'environnement.
 
-## Équilibrage
+## Tests
 
 ```bash
-npm test 400    # simule 400 parties jouées par un bot naïf
+npm test 400                         # 400 parties jouées par un bot (bot complet)
+npx vite-node tests/sim.ts 300 --dumb # bot naïf : ni coups, ni contrebande, ni diplomatie
+npx vite-node tests/forecast.ts      # prévisions = ce que le moteur applique (0 écart attendu)
+npx vite-node tests/calib.ts         # % affiché = taux de réussite réel (assauts et coups)
 ```
 
-Le bot ne sert qu'à repérer les dérives (parties trop courtes, rivaux trop forts). Repère actuel : environ 35 % de victoires pour le bot, fin de partie médiane vers la semaine 25.
+Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérives, pas à mesurer la difficulté pour un humain. Repère v0.2 : environ 25 % de victoires pour le bot.
 
 ## Règles
 
 - **Tour = 1 semaine.** Tu donnes tes ordres, puis « Fin de semaine ».
-- **Argent sale / propre.** Les rackets et commerces illégaux produisent du sale. Les façades (blanchisserie, restaurant, garage) le blanchissent avec 15 % de commission. Les façades et les pots-de-vin se paient en propre.
-- **Territoire.** 9 quartiers en grille 3×3. Tu n'attaques que les quartiers voisins des tiens. Puissance de l'assaut = force des hommes engagés (+2 par capo) + respect/20, contre la défense du quartier, avec ±25 % d'aléa de chaque côté.
-- **Après un assaut.** Les hommes engagés récupèrent une semaine. Un quartier conquis rapporte moitié moins pendant 3 semaines.
-- **Hommes.** Force, discrétion, loyauté, salaire. Un capo donne +20 % de revenus à son quartier. Sous 25 de loyauté, un homme peut trahir (défection ou balance).
-- **Heat.** Monte avec les commerces illégaux, les assauts et le cash sale stocké au-delà de 10 000 $. Elle déclenche des descentes. Au-dessus de 85, les fédéraux peuvent arrêter le Don, sauf si un juge est acheté.
-- **Rivaux.** Castellano, Irlandais de Kilbride et clan Wolska recrutent, attaquent les quartiers faibles et se font la guerre entre eux.
+- **Alcool.** Les speakeasies vendent jusqu'à 18 caisses par semaine de ton stock (whisky, puis gin, puis bière), à un prix qui dépend de la clientèle du quartier. Sans stock, ils ne rapportent que l'entrée. Achat par le lac (−40 % sur le prix du marché, livré la nuit, risque d'interception réduit par l'escorte) ou au grossiste (immédiat, sûr, plus cher). Revente en gros pour profiter des pénuries. Les prix bougent chaque semaine avec des chocs (pénurie à Chicago, canicule…). La distillerie produit du gin, l'entrepôt ajoute du stockage.
+- **Coups.** 3 ou 4 opportunités par semaine (dette, boxe truquée, braquage, témoin, camion ou cave d'un rival, incendie…). Une équipe, une stat (force ou discrétion), une chance exacte. Échec : heat, blessures ou prison.
+- **Commerçants.** Deux par quartier. Tarif de protection bas, normal ou élevé, qui fait varier leur satisfaction. Sous 30 : protection ×0,6, plus de descentes, dénonciations. À 70 et plus : moins de descentes et +1 respect par semaine. Leurs demandes rapportent des **faveurs** (libérer un homme, alibi −12 heat) et parfois des prêts remboursés avec intérêts.
+- **Diplomatie.** Une relation de −100 à 100 avec chaque famille. Dîner d'affaires, tribut payé ou exigé, alliance (relation ≥ 40), guerre, paix. Les rivaux envoient des ultimatums et proposent des alliances. Une relation haute les dissuade de t'attaquer, la guerre multiplie leur agressivité.
+- **Corrano Herald.** Chaque semaine, la une du journal reprend l'événement le plus marquant.
+- **Argent sale / propre.** Le blanchiment (Max, Moitié, Arrêt) passe le sale restant après les salaires en propre, avec 15 % de commission. Façades et enveloppes se paient en propre.
+- **Territoire.** 9 quartiers en grille 3×3, attaques sur les voisins. Puissance = force des hommes (+2 par capo) + respect/20, contre la défense, ±25 % d'aléa de chaque côté.
+- **Heat.** Monte avec les commerces illégaux, les assauts, les coups et le cash stocké. Au-dessus de 85, les fédéraux peuvent arrêter le Don, sauf juge acheté.
+- **Rang.** Petite bande → Famille de quartier → Famille établie → Grande famille → Capo dei Capi, selon le respect.
 - **Victoire :** 9 quartiers, ou 7 quartiers et 100 de respect. **Défaite :** arrestation, plus aucun quartier, ou faillite sans hommes.
 
 ## Structure
 
 ```
 src/
-  types.ts    modèle de données
-  data.ts     quartiers, établissements, familles, noms
-  state.ts    création de partie, sauvegarde localStorage, calculs dérivés
-  engine.ts   actions du joueur et résolution de la semaine
-  events.ts   événements aléatoires à choix
-  ui.ts       rendu et interactions
-  style.css   thème feutre, laiton et sang de bœuf
-tests/sim.ts  simulation d'équilibrage
+  types.ts      modèle de données
+  data.ts       quartiers, établissements, alcools, tarifs, familles, noms
+  state.ts      création de partie, sauvegarde, projection de la semaine (ventes, protection)
+  engine.ts     actions du joueur et résolution de la semaine
+  booze.ts      contrebande : achats, livraisons, revente, marché
+  jobs.ts       coups : génération, équipes, résolution
+  shops.ts      commerçants, tarifs, faveurs
+  diplomacy.ts  relations, alliances, guerre, Corrano Herald
+  events.ts     événements à choix
+  ui.ts         rendu et interactions
+  style.css     thème feutre, laiton et sang de bœuf
+tests/          simulation, prévisions, calibration
 ```

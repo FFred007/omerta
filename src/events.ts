@@ -1,6 +1,17 @@
-import { fmt, checkEnd } from './engine';
-import { activeMembers, chance, clamp, log, neighbors, nextId, owned, pick, rival } from './state';
-import type { GameState, PendingEvent } from './types';
+import { checkEnd } from './engine';
+import { declareWar, playerForce } from './diplomacy';
+import { activeMembers, chance, clamp, district, log, neighbors, news, nextId, owned, pick, rival, stockTotal, storageCap } from './state';
+import type { GameState, PendingEvent, Shop } from './types';
+
+/** Un commerçant au hasard dans un quartier du joueur */
+function anyShop(s: GameState): { d: string; shop: Shop } | null {
+  const pool = owned(s).flatMap((d) => d.shops.map((shop) => ({ d: d.id, shop })));
+  return pool.length ? pick(pool) : null;
+}
+function shopOf(s: GameState, ev: PendingEvent) {
+  const d = district(s, String(ev.data?.district));
+  return { d, shop: d.shops.find((x) => x.id === Number(ev.data?.shop)) };
+}
 
 type EventDef = {
   key: string;
@@ -24,13 +35,13 @@ const EVENTS: EventDef[] = [
     }),
   },
   {
-    key: 'cargaison', weight: 3, when: (s) => s.week > 2,
+    key: 'cargaison', weight: 3, when: (s) => s.week > 2 && storageCap(s) - stockTotal(s) >= 30,
     build: (s) => ({
       key: 'cargaison',
       title: 'Whisky canadien',
-      text: "Un contrebandier propose un chargement de whisky pur malt, livré cette nuit par le lac. Payable d'avance.",
+      text: "Un contrebandier propose 30 caisses de pur malt, livrées cette nuit par le lac. Payable d'avance, sans garantie.",
       choices: [
-        { label: 'Acheter la cargaison', hint: '-2 000 sale · 70 % : +4 500 sale', effect: 'c_buy', disabled: s.dirty < 2000 },
+        { label: 'Acheter la cargaison', hint: '-1 200 sale · 75 % : +30 caisses de whisky', effect: 'c_buy', disabled: s.dirty < 1200 },
         { label: 'Laisser passer', hint: 'Rien ne se passe', effect: 'none' },
       ],
     }),
@@ -49,9 +60,9 @@ const EVENTS: EventDef[] = [
   },
   {
     key: 'treve', weight: 2,
-    when: (s) => s.rivals.some((r) => r.alive && r.truceWeeks === 0 && touchesPlayer(s, r.id)),
+    when: (s) => s.rivals.some((r) => r.alive && !r.alliance && r.truceWeeks === 0 && touchesPlayer(s, r.id)),
     build: (s) => {
-      const r = pick(s.rivals.filter((x) => x.alive && x.truceWeeks === 0 && touchesPlayer(s, x.id)));
+      const r = pick(s.rivals.filter((x) => x.alive && !x.alliance && x.truceWeeks === 0 && touchesPlayer(s, x.id)));
       return {
         key: 'treve',
         title: 'Une offre de paix',
@@ -141,6 +152,126 @@ const EVENTS: EventDef[] = [
       ],
     }),
   },
+  // ---------- Commerçants ----------
+  {
+    key: 'vitrine', weight: 4, when: (s) => !!anyShop(s) && s.rivals.some((r) => r.alive),
+    build: (s) => {
+      const { d, shop } = anyShop(s)!;
+      const r = pick(s.rivals.filter((x) => x.alive));
+      return {
+        key: 'vitrine',
+        title: `${shop.owner} demande justice`,
+        text: `Le ${shop.trade} de ${district(s, d).name} : « Des voyous de ${r.name} ont cassé ma vitrine et frappé mon commis. Je paie pour être protégé, Don. »`,
+        data: { district: d, shop: shop.id, rival: r.id },
+        choices: [
+          { label: 'Envoyer tes hommes', hint: '+3 respect, +20 satisfaction, +1 faveur, relation avec le rival −8', effect: 'v_help' },
+          { label: 'Lui dire de patienter', hint: '−15 satisfaction', effect: 'v_ignore' },
+        ],
+      };
+    },
+  },
+  {
+    key: 'pret', weight: 3, when: (s) => !!anyShop(s),
+    build: (s) => {
+      const { d, shop } = anyShop(s)!;
+      return {
+        key: 'pret',
+        title: 'Un prêt entre amis',
+        text: `${shop.owner}, ${shop.trade} à ${district(s, d).name}, a besoin de 800 $ pour sauver sa boutique. Les banques ne prêtent pas aux gens comme lui.`,
+        data: { district: d, shop: shop.id },
+        choices: [
+          { label: 'Prêter 800 $', hint: '−800 sale · rembourse 1 100 $ propres dans 5 sem. · +1 faveur', effect: 'p_lend', disabled: s.dirty < 800 },
+          { label: 'Refuser', hint: '−8 satisfaction', effect: 'p_refuse' },
+        ],
+      };
+    },
+  },
+  {
+    key: 'fils', weight: 3, when: (s) => !!anyShop(s),
+    build: (s) => {
+      const { d, shop } = anyShop(s)!;
+      return {
+        key: 'fils',
+        title: 'Le fils du ' + shop.trade,
+        text: `Le fils de ${shop.owner} a été arrêté pour une bagarre à ${district(s, d).name}. Le commissaire attend une « caution » officieuse.`,
+        data: { district: d, shop: shop.id },
+        choices: [
+          { label: 'Payer le commissaire', hint: '−600 propre, +25 satisfaction, +1 faveur', effect: 'f_bail', disabled: s.clean < 600 },
+          { label: 'Ce ne sont pas tes affaires', hint: '−10 satisfaction', effect: 'f_no' },
+        ],
+      };
+    },
+  },
+  {
+    key: 'impaye', weight: 3, when: (s) => owned(s).some((d) => d.tariff === 'eleve' || d.shops.some((x) => x.satisfaction < 45)),
+    build: (s) => {
+      const pool = owned(s).flatMap((d) => d.shops.map((shop) => ({ d: d.id, shop }))).sort((a, b) => a.shop.satisfaction - b.shop.satisfaction);
+      const { d, shop } = pool[0];
+      return {
+        key: 'impaye',
+        title: 'Il ne peut plus payer',
+        text: `${shop.owner}, ${shop.trade} à ${district(s, d).name}, n'a pas de quoi régler la protection cette semaine. Tout le quartier regarde comment tu réagis.`,
+        data: { district: d, shop: shop.id },
+        choices: [
+          { label: 'Passer l’éponge', hint: '−400 sale, +25 satisfaction, +1 faveur', effect: 'i_forgive', disabled: s.dirty < 400 },
+          { label: 'Faire un exemple', hint: '+3 respect, +3 heat, tout le quartier −20 satisfaction', effect: 'i_example' },
+        ],
+      };
+    },
+  },
+  {
+    key: 'garagiste', weight: 2, when: (s) => !!anyShop(s) && s.safeRouteWeeks === 0,
+    build: (s) => {
+      const { d, shop } = anyShop(s)!;
+      return {
+        key: 'garagiste',
+        title: 'Une route discrète',
+        text: `${shop.owner} connaît un chemin de terre qui évite les barrages fédéraux. Il te le montre contre un petit service.`,
+        data: { district: d, shop: shop.id },
+        choices: [
+          { label: 'Accepter (−300 sale)', hint: 'Risque des livraisons ×0,5 pendant 6 semaines, +10 satisfaction', effect: 'g_yes', disabled: s.dirty < 300 },
+          { label: 'Décliner', hint: 'Rien ne se passe', effect: 'none' },
+        ],
+      };
+    },
+  },
+  // ---------- Diplomatie ----------
+  {
+    key: 'ultimatum', weight: 3,
+    when: (s) => s.week >= 6 && s.rivals.some((r) => r.alive && !r.war && !r.alliance && r.relation <= -30 && r.strength > playerForce(s) * 0.7),
+    build: (s) => {
+      const r = pick(s.rivals.filter((x) => x.alive && !x.war && !x.alliance && x.relation <= -30 && x.strength > playerForce(s) * 0.7));
+      const amount = 1500;
+      return {
+        key: 'ultimatum',
+        title: `L'ultimatum de ${r.boss}`,
+        text: `Un messager dépose une boîte devant ta porte : un poisson mort, et un mot. « ${amount} $ avant dimanche, ou c'est la guerre. » — ${r.boss}`,
+        data: { rival: r.id, amount },
+        choices: [
+          { label: `Payer ${amount} $`, hint: 'Relation +25, −3 respect', effect: 'u_pay', disabled: s.dirty < amount },
+          { label: 'Négocier la moitié', hint: s.respect >= 30 ? '−750 sale, relation +8' : '30 respect requis', effect: 'u_half', disabled: s.respect < 30 || s.dirty < 750 },
+          { label: 'Renvoyer le poisson', hint: 'Guerre ouverte, +4 respect', effect: 'u_war' },
+        ],
+      };
+    },
+  },
+  {
+    key: 'alliance', weight: 2,
+    when: (s) => s.rivals.some((r) => r.alive && !r.alliance && !r.war && r.relation >= 30),
+    build: (s) => {
+      const r = pick(s.rivals.filter((x) => x.alive && !x.alliance && !x.war && x.relation >= 30));
+      return {
+        key: 'alliance',
+        title: `${r.boss} tend la main`,
+        text: `« Nous avons les mêmes ennemis, toi et moi. » ${r.boss} propose une alliance : vous ne vous attaquez plus et chacun garde son territoire.`,
+        data: { rival: r.id },
+        choices: [
+          { label: "Sceller l'alliance", hint: 'Plus aucune attaque entre vous', effect: 'a_yes' },
+          { label: 'Décliner poliment', hint: 'Relation −5', effect: 'a_no' },
+        ],
+      };
+    },
+  },
 ];
 
 function touchesPlayer(s: GameState, rivalId: string) {
@@ -148,13 +279,13 @@ function touchesPlayer(s: GameState, rivalId: string) {
 }
 
 export function rollEvent(s: GameState): PendingEvent | null {
-  const pool = EVENTS.filter((e) => e.when(s));
+  const pool = EVENTS.filter((e) => e.when(s) && e.key !== s.lastEventKey);
   if (!pool.length) return null;
   const total = pool.reduce((t, e) => t + e.weight, 0);
   let roll = Math.random() * total;
   for (const e of pool) {
     roll -= e.weight;
-    if (roll <= 0) return e.build(s);
+    if (roll <= 0) { s.lastEventKey = e.key; return e.build(s); }
   }
   return pool[0].build(s);
 }
@@ -171,10 +302,87 @@ export function resolveEvent(s: GameState, effect: string) {
     case 'j_scare': respect(3); heat(6); log(s, 'neutral', 'Le journaliste a compris le message.'); break;
     case 'j_ignore': heat(10); log(s, 'police', "L'article fait la une. Le préfet est furieux (+10 heat)."); break;
     case 'c_buy':
-      s.dirty -= 2000;
-      if (chance(0.7)) { s.dirty += 4500; log(s, 'money', `La cargaison est arrivée. Écoulée pour ${fmt(4500)}.`); }
-      else { heat(8); log(s, 'police', 'Les garde-côtes ont intercepté le bateau. Argent perdu (+8 heat).'); }
+      s.dirty -= 1200;
+      if (chance(0.75)) {
+        const q = Math.min(30, Math.max(0, storageCap(s) - stockTotal(s)));
+        s.stock.whisky += q;
+        log(s, 'money', `La cargaison est arrivée : ${q} caisses de whisky à l'entrepôt.`);
+      } else { heat(8); log(s, 'police', 'Les garde-côtes ont intercepté le bateau. Argent perdu (+8 heat).'); }
       break;
+    case 'v_help': {
+      const { shop } = shopOf(s, ev);
+      const r = rival(s, String(ev.data?.rival));
+      respect(3); s.favors++;
+      if (shop) shop.satisfaction = clamp(shop.satisfaction + 20, 0, 100);
+      if (r) r.relation = clamp(r.relation - 8, -100, 100);
+      log(s, 'good', `Tes hommes ont rendu visite aux voyous. ${shop?.owner ?? 'Le commerçant'} te doit une faveur.`);
+      break;
+    }
+    case 'v_ignore': { const { shop } = shopOf(s, ev); if (shop) shop.satisfaction = clamp(shop.satisfaction - 15, 0, 100); break; }
+    case 'p_lend': {
+      const { shop } = shopOf(s, ev);
+      s.dirty -= 800; s.favors++;
+      s.loans.push({ due: s.week + 5, amount: 1100, shop: shop?.owner ?? 'Un commerçant' });
+      if (shop) shop.satisfaction = clamp(shop.satisfaction + 10, 0, 100);
+      log(s, 'neutral', `Tu prêtes 800 $ à ${shop?.owner}. Remboursement prévu en semaine ${s.week + 5}.`);
+      break;
+    }
+    case 'p_refuse': { const { shop } = shopOf(s, ev); if (shop) shop.satisfaction = clamp(shop.satisfaction - 8, 0, 100); break; }
+    case 'f_bail': {
+      const { shop } = shopOf(s, ev);
+      s.clean -= 600; s.favors++;
+      if (shop) shop.satisfaction = clamp(shop.satisfaction + 25, 0, 100);
+      log(s, 'good', `Le fils de ${shop?.owner} est libéré. Son père n'oubliera pas.`);
+      break;
+    }
+    case 'f_no': { const { shop } = shopOf(s, ev); if (shop) shop.satisfaction = clamp(shop.satisfaction - 10, 0, 100); break; }
+    case 'i_forgive': {
+      const { shop } = shopOf(s, ev);
+      s.dirty -= 400; s.favors++;
+      if (shop) shop.satisfaction = clamp(shop.satisfaction + 25, 0, 100);
+      log(s, 'neutral', `Tu passes l'éponge pour ${shop?.owner}. Le quartier en parle.`);
+      break;
+    }
+    case 'i_example': {
+      const { d } = shopOf(s, ev);
+      respect(3); heat(3);
+      d.shops.forEach((x) => (x.satisfaction = clamp(x.satisfaction - 20, 0, 100)));
+      log(s, 'bad', `La boutique est saccagée devant tout ${d.name}. Plus personne n'osera être en retard.`);
+      break;
+    }
+    case 'g_yes': {
+      const { shop } = shopOf(s, ev);
+      s.dirty -= 300; s.safeRouteWeeks = 6;
+      if (shop) shop.satisfaction = clamp(shop.satisfaction + 10, 0, 100);
+      log(s, 'good', 'Tes camions empruntent désormais la route du garagiste (6 semaines).');
+      break;
+    }
+    case 'u_pay': {
+      const r = rival(s, String(ev.data?.rival));
+      s.dirty -= Number(ev.data?.amount); respect(-3);
+      if (r) { r.relation = clamp(r.relation + 25, -100, 100); r.money += Number(ev.data?.amount); }
+      log(s, 'neutral', `Tu paies ${r?.boss}. La paix a un prix.`);
+      break;
+    }
+    case 'u_half': {
+      const r = rival(s, String(ev.data?.rival));
+      s.dirty -= 750;
+      if (r) { r.relation = clamp(r.relation + 8, -100, 100); r.money += 750; }
+      log(s, 'neutral', `${r?.boss} accepte la moitié, du bout des lèvres.`);
+      break;
+    }
+    case 'u_war': declareWar(s, String(ev.data?.rival)); break;
+    case 'a_yes': {
+      const r = rival(s, String(ev.data?.rival));
+      if (r) {
+        r.alliance = true;
+        r.relation = Math.max(r.relation, 45);
+        log(s, 'good', `Alliance scellée avec ${r.name}.`);
+        news(s, 4, 'Pacte entre deux familles', `${r.boss} s'allie à la ${s.familyName}. Les autres familles s'inquiètent.`);
+      }
+      break;
+    }
+    case 'a_no': { const r = rival(s, String(ev.data?.rival)); if (r) r.relation = clamp(r.relation - 5, -100, 100); break; }
     case 'm_gift':
       if (s.clean >= 600) { s.clean -= 600; respect(6); log(s, 'good', 'Tout Little Sicily parle de ta générosité.'); }
       else { respect(1); log(s, 'neutral', "Faute de liquide propre, tu t'es contenté de fleurs."); }

@@ -1,40 +1,36 @@
-// Calibration : % affiché avant l'assaut vs taux de victoire réel, sur des parties simulées.
+// Calibration : % affiché vs taux réel, pour les assauts et pour les coups.
 import * as E from '../src/engine';
-import { resolveEvent } from '../src/events';
-import { winChance as shown, activeMembers, attackPower, defenseOf, district, isAttackable, membersIn, newGame, owned } from '../src/state';
-import type { GameState } from '../src/types';
-
-const bins: Record<string, { n: number; won: number; multi: number; multiWon: number }> = {};
+import { jobChance, setJobTeam } from '../src/jobs';
+import { activeMembers, attackPower, defenseOf, district, isAttackable, owned, winChance } from '../src/state';
+const bins: Record<string, { n: number; won: number }> = {};
+const add = (kind: string, p: number, won: boolean) => {
+  const k = `${kind} ${(Math.min(0.9, Math.floor(p * 5) / 5)).toFixed(1)}`;
+  const b = (bins[k] ??= { n: 0, won: 0 });
+  b.n++; if (won) b.won++;
+};
 for (let g = 0; g < 1500; g++) {
-  const s: GameState = newGame();
-  while (s.status === 'playing' && s.week < 60) {
-    if (s.pendingEvent) { resolveEvent(s, s.pendingEvent.choices.find((c) => !c.disabled)!.effect); continue; }
-    for (const r of [...s.recruits]) if (activeMembers(s).length < owned(s).length * 2 + 3 && s.dirty + s.clean > r.cost + 1500) E.hire(s, r.id);
-    const reserve = () => activeMembers(s).filter((m) => !m.assignment);
-    for (const d of owned(s)) if (!membersIn(s, d.id).length && reserve().length) E.assign(s, reserve()[0].id, d.id);
-    // jusqu'à 2 assauts par tour, comme un joueur
-    const targets = s.districts.filter((d) => isAttackable(s, d)).sort(() => Math.random() - 0.5).slice(0, 2);
+  const s = E.startGame();
+  while (s.status === 'playing' && s.week < 40) {
+    s.pendingEvent = null;
     let pool = activeMembers(s).filter((m) => !(m.fatigue ?? 0)).sort(() => Math.random() - 0.5);
-    for (const t of targets) {
-      const k = Math.ceil(pool.length / targets.length);
-      const ids = pool.slice(0, k).map((m) => m.id);
-      pool = pool.slice(k);
-      if (ids.length) E.orderAttack(s, t.id, ids);
+    const preds: { kind: string; id: string | number; p: number }[] = [];
+    const t = s.districts.filter((d) => isAttackable(s, d) && !s.rivals.find((r) => r.id === d.owner)?.alliance)[0];
+    if (t && pool.length > 2) {
+      const ids = pool.splice(0, 2).map((m) => m.id);
+      if (E.orderAttack(s, t.id, ids).ok) preds.push({ kind: 'assaut', id: t.id, p: winChance(attackPower(s, ids), defenseOf(s, t)) });
     }
-    const preds = s.orders.map((o) => ({ id: o.districtId, p: shown(attackPower(s, o.memberIds), defenseOf(s, district(s, o.districtId))) }));
-    const multi = preds.length > 1;
+    for (const j of s.jobs) {
+      const ids = pool.splice(0, j.minMen).map((m) => m.id);
+      if (ids.length < j.minMen) break;
+      setJobTeam(s, j.id, ids);
+      preds.push({ kind: 'coup', id: j.title, p: jobChance(s, j) });
+    }
     E.endTurn(s);
     for (const x of preds) {
-      const key = (Math.floor(x.p * 10) / 10).toFixed(1);
-      const b = (bins[key] ??= { n: 0, won: 0, multi: 0, multiWon: 0 });
-      const won = district(s, x.id).owner === 'player' ? 1 : 0;
-      b.n++; b.won += won;
-      if (multi) { b.multi++; b.multiWon += won; }
+      if (x.kind === 'assaut') add('assaut', x.p, district(s, String(x.id)).owner === 'player');
+      else add('coup', x.p, s.lastReport.some((e) => e.text.startsWith(`Coup réussi : ${x.id}`)));
     }
+    if (!owned(s).length) break;
   }
 }
-console.log('affiché   n      réel   (si 2 assauts le même tour)');
-for (const k of Object.keys(bins).sort()) {
-  const b = bins[k];
-  console.log(`${k}-${(+k + 0.1).toFixed(1)}  ${String(b.n).padStart(6)}  ${(b.won / b.n * 100).toFixed(1).padStart(5)} %   ${b.multi ? (b.multiWon / b.multi * 100).toFixed(1) + ' % sur ' + b.multi : '-'}`);
-}
+for (const k of Object.keys(bins).sort()) console.log(k.padEnd(12), String(bins[k].n).padStart(6), `${((bins[k].won / bins[k].n) * 100).toFixed(1)} %`);
