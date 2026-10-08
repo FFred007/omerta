@@ -266,7 +266,7 @@ export function familyTick(s: GameState) {
       const youngest = Math.min(...s.children.filter((c) => c.generation === (s.generation ?? 1)).map((c) => childAge(s, c)), 99);
       const spouseAge = ageOf(s, sp);
       const own = s.children.filter((c) => c.generation === (s.generation ?? 1)).length;
-      if (youngest >= 1 && spouseAge < 42 && own < 5 && chance(0.03 + sp.affection / 2000)) {
+      if (youngest >= 1 && spouseAge < 42 && own < 5 && chance(0.05 + sp.affection / 1000)) {
         sp.pregnantWeeks = 5;
         log(s, 'good', `${sp.name} est enceinte ! L'enfant naîtra dans 5 semaines.`);
         news(s, 3, 'Heureux événement chez le Don', `${sp.name} attendrait un enfant. Les paris sont ouverts : garçon ou fille ?`);
