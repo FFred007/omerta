@@ -69,6 +69,8 @@ Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérive
 - **Hommes.** Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat la plus utilisée ; tous les deux niveaux, un trait (Tireur d'élite, Gueule cassée, Fantôme, Comptable, Chauffeur, Négociateur…). Rangs : Recrue, Soldat, Homme de confiance, Vétéran, Capo. Les 4 recrues sont renouvelées chaque semaine, avec leurs traits et parfois un défaut (Bavard, Cupide, Ivrogne, Trouillard). Les Dons rivaux ont aussi des traits, et en gagnent avec leurs victoires (Aguerri) ou leurs défaites contre toi (Revanchard).
 - **Le Don.** Ton personnage : Poigne, Ombre, Verbe, Flair, expérience double, et des points à placer en stats ou en talents (Boucher, Renard, Parrain : 5 talents chacun). Il peut monter au front (assauts, coups) : +2 par homme à ses côtés, +2 respect, mais +5 heat (vu sur les lieux), blessures, cicatrices, arrestation ou mort.
 - **La famille du Don.** Rencontres (chanteuse, héritière, fille de commerçant, fille d'un Don rival qui scelle une alliance), cour, mariage, épouse avec traits et affection, grossesse, naissances, éducation à 6 et 12 ans, entrée dans les affaires à 16 ans. 1 an = 6 semaines. Si le Don meurt ou tombe pour 20 ans, l'héritier reprend avec la moitié de ses talents ; s'il est mineur, un régent tient la famille ; sans enfant, la partie s'achève.
+- **Le consigliere.** En haut de l'écran, ton conseiller (ton capo pendant l'ascension, le consigliere ensuite) donne chaque lundi les trois points les plus urgents (procès, dossier, heat, salaires impayés, rupture d'alcool, coalition, enquêteurs, vendettas, vote de la Commission, ville sans gouverneur, hommes peu loyaux, succession…), chacun avec un lien vers le bon onglet. Il ouvre la semaine avec le bilan de la précédente : argent sale et propre, respect, heat, dossier, confiance du Don, quartiers pris et perdus.
+- **Courbes.** Le Journal trace l'argent, la heat, le dossier et le respect semaine après semaine (et la confiance du Don pendant l'ascension), avec la valeur exacte au survol.
 - **Portraits.** Générés en SVG (gravure de journal), ils évoluent avec l'âge, les cicatrices et le rang.
 - **Fin choisie.** Pas de victoire automatique. À partir de la semaine 12, le Don peut prendre sa retraite (score ×1), ou se ranger s'il est Parrain, siège à la Commission, a 30 000 $ propres, un dossier ≤ 30 et une heat ≤ 30 (score ×1,5). Le score additionne fortune, quartiers, villes, établissements, respect, Commission, hommes, famille et générations, moins le dossier et la heat. Mort ou condamné sans héritier : ×0,5 ; plus aucun quartier : ×0,25. Le record est gardé dans le navigateur.
 
@@ -92,6 +94,7 @@ src/
   portraits.ts  portraits SVG générés
   network.ts    réseau d'influence
   dossier.ts    dossier fédéral et procès
+  advisor.ts    le consigliere : conseils du lundi et bilan de la semaine
   cities.ts     villes, voyages, gouverneurs, implantation
   commission.ts Commission des Dons : motions, votes, pactes, trahisons
   score.ts      fin choisie et score final

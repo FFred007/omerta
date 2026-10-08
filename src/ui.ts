@@ -11,6 +11,7 @@ import * as HE from './heist';
 import { activeVendettas } from './vendetta';
 import * as BL from './buildings';
 import * as CA from './career';
+import * as AD from './advisor';
 import { SLOT_MAX, UPGRADES } from './data';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
@@ -58,6 +59,8 @@ const ui = {
   feed: [] as { id: number; text: string; tone: string; week: number; day: number; born: number }[],
   feedId: 0,
   heatOpen: false,
+  bilanSeen: -1, // semaine dont le bilan a été refermé
+  advisorOpen: true,
   shown: { dirty: 0, clean: 0, respect: 0 }, // valeurs affichées (pour les compteurs animés)
 };
 const SPEEDS = [1, 2, 3];
@@ -145,6 +148,7 @@ export function render() {
     ${clockBar()}
     <main class="layout">
       <section>
+        ${advisorCard()}
         ${mapView()}
         ${weekCard()}
       </section>
@@ -300,6 +304,39 @@ function topbar() {
       <button class="btn small ${ui.confirm === 'restart' ? 'danger' : ''}" data-act="restart">${ui.confirm === 'restart' ? 'Abandonner la partie ?' : 'Nouvelle partie'}</button>
     </div>
   </header>`;
+}
+
+// ---------- Le consigliere et le bilan de la semaine ----------
+function advisorCard() {
+  if (s.status !== 'playing') return '';
+  const a = AD.advisor(s);
+  const items = AD.advice(s);
+  const b = AD.weekDeltas(s);
+  const showBilan = !!b && ui.bilanSeen !== b.week && b.week === s.week - 1;
+  const fmtD = (d: AD.Delta) => {
+    const v = d.money ? sign(d.value) : `${d.value > 0 ? '+' : d.value < 0 ? '−' : ''}${Math.abs(d.value)}`;
+    const good = d.value === 0 ? 'flat' : (d.value > 0) === (d.good === 'up') ? 'up' : 'down';
+    return `<span class="bd ${good}"><small>${d.label}</small><b class="num">${d.value === 0 ? '=' : v}</b></span>`;
+  };
+  const bilan = showBilan ? `
+    <div class="bilan">
+      <div class="bilan-head"><h4>Bilan de la semaine ${b!.week}</h4><button class="btn small ghost" data-act="bilan-close" aria-label="Refermer le bilan">Vu</button></div>
+      <div class="bilan-row">${b!.deltas.map(fmtD).join('')}</div>
+      ${b!.gained.length || b!.lost.length ? `<p class="bilan-d">${b!.gained.length ? `<span class="clean">Pris : ${b!.gained.map(esc).join(', ')}</span>` : ''}${b!.gained.length && b!.lost.length ? ' · ' : ''}${b!.lost.length ? `<span class="danger">Perdu : ${b!.lost.map(esc).join(', ')}</span>` : ''}</p>` : ''}
+    </div>` : '';
+  const list = items.length
+    ? `<ol class="adv-list">${items.map((x) => `<li><button class="adv-item ${x.tone}" data-act="tab" data-id="${x.tab}"><span class="adv-dot" aria-hidden="true"></span><span class="adv-text">${esc(x.text)}</span><span class="adv-link">${esc(x.link)} →</span></button></li>`).join('')}</ol>`
+    : `<p class="note">Rien ne presse cette semaine. C'est le moment de construire, de recruter ou de préparer un coup.</p>`;
+  return `
+  <div class="advisor ${ui.advisorOpen ? '' : 'closed'}">
+    <button class="adv-head" data-act="advisor-toggle" aria-expanded="${ui.advisorOpen}">
+      ${portrait({ seed: a.seed, size: 48, age: a.age, sex: 'm', rank: 'capo' })}
+      <span class="adv-who"><b>${esc(a.name)}</b><small>${esc(a.title)} · lundi, semaine ${s.week}</small></span>
+      <span class="adv-sum">${ui.advisorOpen ? '' : items.length ? `${items.length} point${items.length > 1 ? 's' : ''} ${items[0].tone === 'danger' ? 'urgent' + (items.length > 1 ? 's' : '') : 'à voir'}` : 'rien ne presse'}</span>
+      <span class="adv-chev" aria-hidden="true">${ui.advisorOpen ? '▴' : '▾'}</span>
+    </button>
+    ${ui.advisorOpen ? `${bilan}<p class="adv-say">« ${items.length ? (items[0].tone === 'danger' ? 'Écoute-moi bien. Voilà ce qui ne peut pas attendre.' : `${['Une chose', 'Deux choses', 'Trois choses'][items.length - 1]}, et ensuite je te laisse.`) : 'Une semaine tranquille, pour une fois.'} »</p>${list}` : ''}
+  </div>`;
 }
 
 function mapView() {
@@ -1494,8 +1531,92 @@ function herald(h: { week: number; title: string; sub: string }, big = false) {
   </div>`;
 }
 
+// ---------- Courbes ----------
+type ChartPt = { week: number; v: number };
+const charts = new Map<string, { pts: ChartPt[]; fmt: (n: number) => string; x: (i: number) => number; y: (v: number) => number }>();
+const CW = 320, CH = 120, ML = 40, MR = 10, MT = 10, MB = 20;
+function lineChart(id: string, title: string, pts: ChartPt[], fmtV: (n: number) => string, o: { min?: number; max?: number; ref?: { v: number; label: string } } = {}) {
+  const vals = pts.map((p) => p.v);
+  let lo = o.min ?? Math.min(...vals);
+  let hi = o.max ?? Math.max(...vals);
+  if (hi === lo) { hi += 1; lo = o.min ?? lo - 1; }
+  const x = (i: number) => ML + (pts.length > 1 ? (i / (pts.length - 1)) * (CW - ML - MR) : 0);
+  const y = (v: number) => MT + (1 - (v - lo) / (hi - lo)) * (CH - MT - MB);
+  charts.set(id, { pts, fmt: fmtV, x, y });
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+  const last = pts[pts.length - 1];
+  const ref = o.ref && o.ref.v > lo && o.ref.v < hi ? `<line class="ch-ref" x1="${ML}" x2="${CW - MR}" y1="${y(o.ref.v)}" y2="${y(o.ref.v)}"/><text class="ch-reft" x="${ML + 4}" y="${y(o.ref.v) - 3}">${esc(o.ref.label)}</text>` : '';
+  return `<figure class="chart" data-chart="${id}">
+    <figcaption><span>${esc(title)}</span><b class="num">${fmtV(last.v)}</b></figcaption>
+    <svg viewBox="0 0 ${CW} ${CH}" role="img" aria-label="${esc(title)} : de ${fmtV(pts[0].v)} en semaine ${pts[0].week} à ${fmtV(last.v)} en semaine ${last.week}">
+      <line class="ch-grid" x1="${ML}" x2="${CW - MR}" y1="${y(hi)}" y2="${y(hi)}"/>
+      <line class="ch-base" x1="${ML}" x2="${CW - MR}" y1="${y(lo)}" y2="${y(lo)}"/>
+      <text class="ch-ax" x="${ML - 6}" y="${y(hi) + 4}" text-anchor="end">${fmtV(hi)}</text>
+      <text class="ch-ax" x="${ML - 6}" y="${y(lo) + 4}" text-anchor="end">${fmtV(lo)}</text>
+      <text class="ch-ax" x="${ML}" y="${CH - 4}">${pts[0].week ? `S${pts[0].week}` : 'Départ'}</text>
+      <text class="ch-ax" x="${CW - MR}" y="${CH - 4}" text-anchor="end">S${last.week}</text>
+      ${ref}
+      <path class="ch-line" d="${d}"/>
+      <circle class="ch-last" cx="${x(pts.length - 1)}" cy="${y(last.v)}" r="4"/>
+      <line class="ch-x" x1="0" x2="0" y1="${MT}" y2="${CH - MB}" style="display:none"/>
+      <circle class="ch-dot" r="4.5" style="display:none"/>
+      <rect class="chart-hit" x="${ML - 6}" y="0" width="${CW - ML - MR + 12}" height="${CH}" fill="transparent"/>
+    </svg>
+    <div class="ch-tip" style="display:none"></div>
+  </figure>`;
+}
+function chartHover(ev: PointerEvent) {
+  const hit = (ev.target as Element).closest?.('.chart-hit');
+  for (const f of app.querySelectorAll<HTMLElement>('.chart.hover')) if (!hit || f !== hit.closest('.chart')) {
+    f.classList.remove('hover');
+    f.querySelector<SVGElement>('.ch-x')!.style.display = 'none';
+    f.querySelector<SVGElement>('.ch-dot')!.style.display = 'none';
+    f.querySelector<HTMLElement>('.ch-tip')!.style.display = 'none';
+  }
+  if (!hit) return;
+  const fig = hit.closest<HTMLElement>('.chart')!;
+  const c = charts.get(fig.dataset.chart ?? '');
+  if (!c || !c.pts.length) return;
+  const svg = fig.querySelector('svg')!;
+  const box = svg.getBoundingClientRect();
+  const vx = ((ev.clientX - box.left) / box.width) * CW;
+  let i = Math.round(((vx - ML) / (CW - ML - MR)) * (c.pts.length - 1));
+  i = Math.max(0, Math.min(c.pts.length - 1, i));
+  const p = c.pts[i];
+  fig.classList.add('hover');
+  const xl = fig.querySelector<SVGLineElement>('.ch-x')!;
+  xl.setAttribute('x1', String(c.x(i))); xl.setAttribute('x2', String(c.x(i))); xl.style.display = '';
+  const dot = fig.querySelector<SVGCircleElement>('.ch-dot')!;
+  dot.setAttribute('cx', String(c.x(i))); dot.setAttribute('cy', String(c.y(p.v))); dot.style.display = '';
+  const tip = fig.querySelector<HTMLElement>('.ch-tip')!;
+  tip.innerHTML = `<small>${p.week ? `Semaine ${p.week}` : 'Départ'}</small><b class="num">${c.fmt(p.v)}</b>`;
+  tip.style.display = '';
+  const px = (c.x(i) / CW) * box.width;
+  const fb = fig.getBoundingClientRect();
+  tip.style.left = `${Math.max(0, Math.min(fb.width - tip.offsetWidth, px + (box.left - fb.left) - tip.offsetWidth / 2))}px`;
+  tip.style.top = `${(c.y(p.v) / CH) * box.height + (box.top - fb.top) - tip.offsetHeight - 10}px`;
+}
+app.addEventListener('pointermove', chartHover);
+app.addEventListener('pointerdown', chartHover);
+
+function chartsBlock() {
+  const h = s.history ?? [];
+  if (h.length < 2) return `<p class="note">Les courbes de la famille apparaîtront après le premier dimanche.</p>`;
+  const k = (n: number) => (Math.abs(n) >= 10000 ? `$${Math.round(n / 1000)}k` : `$${Math.round(n).toLocaleString('fr-FR')}`);
+  const int = (n: number) => String(Math.round(n));
+  return `<div class="charts">
+    ${lineChart('money', 'Argent (sale + propre)', h.map((x) => ({ week: x.week, v: x.dirty + x.clean })), k, { min: Math.min(0, ...h.map((x) => x.dirty + x.clean)) })}
+    ${lineChart('heat', 'Heat', h.map((x) => ({ week: x.week, v: x.heat })), int, { min: 0, max: 100, ref: { v: 70, label: 'descentes' } })}
+    ${lineChart('dossier', 'Dossier fédéral', h.map((x) => ({ week: x.week, v: x.dossier })), int, { min: 0, max: 100, ref: { v: 70, label: 'danger' } })}
+    ${lineChart('respect', 'Respect', h.map((x) => ({ week: x.week, v: x.respect })), int, { min: 0 })}
+    ${CA.inCareer(s) && h.filter((x) => x.trust !== undefined).length >= 2 ? lineChart('trust', 'Confiance du Don', h.filter((x) => x.trust !== undefined).map((x) => ({ week: x.week, v: x.trust! })), int, { min: 0, max: 100 }) : ''}
+  </div>`;
+}
+
 function journalPanel() {
   return `<h3>Journal</h3>
+    <h4>Les courbes de la famille</h4>
+    ${chartsBlock()}
     ${s.headlines.length ? `<h4>Les unes du Corrano Herald</h4><div class="heralds">${s.headlines.slice(0, 6).map((h) => herald(h)).join('')}</div>` : ''}
     <h4>Registre de la famille</h4>
     <ul class="log">${s.log.slice(0, 80).map((e) => `<li class="tone-${e.tone}"><span class="w">S${e.week}</span>${esc(e.text)}</li>`).join('')}</ul>`;
@@ -1642,10 +1763,18 @@ app.addEventListener('click', (ev) => {
       render();
       if (window.innerWidth <= 900) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
+    case 'bilan-close':
+      ui.bilanSeen = s.week - 1;
+      render();
+      return;
+    case 'advisor-toggle':
+      ui.advisorOpen = !ui.advisorOpen;
+      render();
+      return;
     case 'tab':
       ui.tab = id as Tab;
       render();
-      if (window.innerWidth <= 900 && el.classList.contains('linkish')) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (window.innerWidth <= 900 && (el.classList.contains('linkish') || el.classList.contains('adv-item'))) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     case 'build': return run(E.build(s, ui.selected, id as BusinessKind));
     case 'sell': return run(E.sellBusiness(s, ui.selected, Number(id)));

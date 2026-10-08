@@ -257,6 +257,16 @@ export function startGame(familyName?: string, classic = false) {
 // Fin de semaine
 // =====================================================================
 
+/** Relevé de fin de semaine (bilan du dimanche, courbes du journal) */
+export function pushSnapshot(s: GameState, week: number) {
+  const h = (s.history ??= []);
+  h.push({
+    week, dirty: Math.round(s.dirty), clean: Math.round(s.clean), heat: Math.round(s.heat), dossier: Math.round(s.dossier ?? 0),
+    respect: Math.round(s.respect), districts: owned(s).length, ...(s.career && s.career.rank !== 'don' ? { trust: s.career.trust } : {}),
+  });
+  if (h.length > 150) h.splice(0, h.length - 150);
+}
+
 export function endTurn(s: GameState): LogEntry[] {
   if (s.status !== 'playing' || s.pendingEvent) return [];
   const week = s.week;
@@ -269,6 +279,8 @@ export function endTurn(s: GameState): LogEntry[] {
   const firing = new Set(s.orders.filter((o) => s.members.some((m) => o.memberIds.includes(m.id) && m.status === 'actif')).map((o) => `Assaut sur ${district(s, o.districtId).name}`));
   const knownLines = known.filter((l) => l.sure || [...firing].some((f) => l.label.startsWith(f)));
   const raidedDistricts = new Set<string>();
+  if (!s.history?.length) pushSnapshot(s, week - 1);
+  const ownedStart = new Set(owned(s).map((d) => d.id));
   s.fx = [];
   s.day = 0;
 
@@ -306,6 +318,9 @@ export function endTurn(s: GameState): LogEntry[] {
   s.lastDossier = { from: dossierStart, to: s.dossier ?? 0, lines: s.dossierWeek ?? [] };
 
   s.lastReport = s.log.filter((e) => e.week === week).reverse();
+  const ownedEnd = new Set(owned(s).map((d) => d.id));
+  s.lastWeek = { gained: [...ownedEnd].filter((id) => !ownedStart.has(id)), lost: [...ownedStart].filter((id) => !ownedEnd.has(id)) };
+  pushSnapshot(s, week);
   s.orders = [];
   s.lowProfile = false;
   s.week += 1;

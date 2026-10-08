@@ -374,6 +374,10 @@ export interface GameState {
   pendingEvent: PendingEvent | null;
   log: LogEntry[];
   lastReport: LogEntry[];
+  /** relevé de fin de semaine, pour le bilan et les courbes */
+  history?: Snapshot[];
+  /** quartiers gagnés et perdus pendant la dernière semaine */
+  lastWeek?: { gained: string[]; lost: string[] };
   nextId: number;
   status: 'playing' | 'won' | 'lost';
   endReason: string;
@@ -550,4 +554,16 @@ export interface Career {
   /** famille rivale à qui le joueur doit le trône */
   debtTo?: string;
   history: { week: number; text: string }[];
+}
+
+/** État de la famille à la fin d'une semaine */
+export interface Snapshot {
+  week: number;
+  dirty: number;
+  clean: number;
+  heat: number;
+  dossier: number;
+  respect: number;
+  districts: number;
+  trust?: number;
 }

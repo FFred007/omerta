@@ -650,3 +650,52 @@ select {
 
 .paths { display: grid; gap: 8px; }
 .paths .job p { margin: 4px 0; }
+
+/* ---------- Le consigliere ---------- */
+.advisor { border: 1px solid var(--line); border-radius: var(--r-md); background: linear-gradient(180deg, rgba(196, 160, 82, 0.07), rgba(0, 0, 0, 0.12)); margin-bottom: 14px; }
+.adv-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; background: none; border: 0; color: var(--ivory); cursor: pointer; text-align: left; font: inherit; }
+.adv-head svg, .adv-head img { flex: none; border-radius: 50%; }
+.adv-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.adv-who b { font-family: var(--display); font-weight: 400; font-size: 15px; }
+.adv-who small { color: var(--ivory-dim); font-size: 12px; }
+.adv-sum { font-size: 12px; color: var(--ivory-dim); white-space: nowrap; }
+.adv-chev { color: var(--brass); }
+.adv-say { margin: 0 12px 6px; font-style: italic; color: var(--ivory-dim); font-size: 13px; }
+.adv-list { list-style: none; margin: 0; padding: 0 8px 8px; display: grid; gap: 4px; }
+.adv-item { display: grid; grid-template-columns: 10px 1fr auto; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 7px 8px; border: 1px solid transparent; border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.16); color: var(--ivory); font: inherit; font-size: 13px; line-height: 1.4; cursor: pointer; }
+.adv-item:hover { border-color: var(--line); background: rgba(196, 160, 82, 0.08); }
+.adv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brass-dim); transform: translateY(-1px); }
+.adv-item.danger .adv-dot { background: var(--oxblood-bright); }
+.adv-item.warn .adv-dot { background: var(--whisky); }
+.adv-link { color: var(--brass); font-size: 12px; white-space: nowrap; }
+.bilan { margin: 0 12px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.2); }
+.bilan-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bilan-head h4 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 14px; color: var(--brass); }
+.bilan-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; }
+.bd { display: flex; flex-direction: column; }
+.bd small { font-size: 11px; color: var(--ivory-dim); }
+.bd b { font-size: 14px; font-family: var(--ledger); }
+.bd.up b { color: var(--clean); }
+.bd.down b { color: var(--oxblood-bright); }
+.bd.up b::before { content: '▲ '; font-size: 9px; }
+.bd.down b::before { content: '▼ '; font-size: 9px; }
+.bd.flat b { color: var(--ivory-dim); }
+.bilan-d { margin: 6px 0 0; font-size: 12.5px; }
+@media (max-width: 600px) { .adv-item { grid-template-columns: 10px 1fr; } .adv-link { grid-column: 2; } .adv-sum { display: none; } }
+
+/* ---------- Courbes du journal ---------- */
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 6px 0 14px; }
+.chart { position: relative; margin: 0; padding: 8px 10px 4px; border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.14); }
+.chart figcaption { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; color: var(--ivory-dim); }
+.chart figcaption b { color: var(--ivory); font-family: var(--ledger); font-size: 14px; }
+.chart svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+.ch-line { fill: none; stroke: var(--brass); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ch-last, .ch-dot { fill: var(--brass); stroke: var(--panel); stroke-width: 2; }
+.ch-grid { stroke: rgba(235, 224, 196, 0.08); }
+.ch-base { stroke: rgba(235, 224, 196, 0.22); }
+.ch-ref { stroke: var(--oxblood-bright); stroke-opacity: 0.45; stroke-dasharray: 3 3; }
+.ch-reft { fill: var(--ivory-dim); font-size: 9.5px; font-family: var(--serif); }
+.ch-ax { fill: var(--ivory-dim); font-size: 10px; font-family: var(--ledger); }
+.ch-x { stroke: rgba(235, 224, 196, 0.35); }
+.ch-tip { position: absolute; pointer-events: none; padding: 3px 7px; background: var(--felt); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: 12px; white-space: nowrap; display: flex; flex-direction: column; line-height: 1.2; }
+.ch-tip small { color: var(--ivory-dim); font-size: 10.5px; }
