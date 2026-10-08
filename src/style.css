@@ -24,7 +24,8 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; }
+html, body { margin: 0; overflow-x: hidden; }
+.layout > section { min-width: 0; }
 body {
   background:
     radial-gradient(ellipse at 50% -10%, rgba(196, 160, 82, 0.08), transparent 60%),
@@ -116,7 +117,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 .map-title h2 { font-family: var(--display); font-weight: 400; font-size: 20px; margin: 0; color: var(--ivory); }
 .map {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
   border: 2px solid var(--brass);
   padding: 6px;
@@ -154,7 +155,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 .tile:hover { background: rgba(235, 224, 196, 0.06); }
 .tile.selected { outline: 2px solid var(--ivory); outline-offset: -3px; z-index: 1; }
 .tile.target:not(.mine) { box-shadow: inset 0 0 0 1px rgba(208, 80, 63, 0.35); }
-.tile .tname { font-family: var(--display); font-size: 16px; line-height: 1.1; color: var(--ivory); margin-top: 4px; }
+.tile .tname { font-family: var(--display); font-size: 16px; line-height: 1.1; color: var(--ivory); margin-top: 18px; overflow-wrap: anywhere; hyphens: auto; }
 .tile .towner { font-size: 11.5px; color: var(--owner-text, var(--ivory-dim)); }
 .tile .tfoot { margin-top: auto; display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
 .chip {
@@ -163,7 +164,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
 }
 .chip.illegal { border-color: rgba(217, 183, 102, 0.45); color: var(--dirty); }
 .chip.legal { border-color: rgba(169, 211, 160, 0.4); color: var(--clean); }
-.tile .tdef { position: absolute; right: 8px; top: 12px; font-family: var(--ledger); font-size: 12px; color: var(--ivory-dim); }
+.tile .tdef { position: absolute; right: 8px; top: 9px; font-family: var(--ledger); font-size: 12px; color: var(--ivory-dim); }
 .tile .badge-attack {
   position: absolute; right: 8px; bottom: 8px;
   font-size: 11px; padding: 2px 6px; background: var(--oxblood); color: #fff; border-radius: 2px;
@@ -173,7 +174,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   .tile .tname { font-size: 13px; }
   .tile .towner { font-size: 10px; }
   .chip { font-size: 9px; padding: 2px 3px; }
-  .tile .tdef { font-size: 10px; top: 9px; right: 5px; }
+  .tile .tdef { font-size: 10px; top: 8px; right: 5px; }
+  .tile .tname { margin-top: 14px; }
+  .tile .towner { overflow-wrap: anywhere; }
 }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 12px; color: var(--ivory-dim); }
 .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; }
@@ -185,8 +188,16 @@ button:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focu
   padding-top: 14px;
 }
 .week-card h3 { font-family: var(--display); font-weight: 400; font-size: 17px; margin: 0 0 8px; }
-.ledger-rows { display: grid; grid-template-columns: 1fr auto; gap: 3px 16px; font-size: 13.5px; }
+.ledger-rows { display: grid; grid-template-columns: 1fr auto; gap: 3px 0; font-size: 13.5px; }
+.ledger-rows > span:nth-child(odd) { padding-right: 16px; }
 .ledger-rows .num { text-align: right; }
+.ledger-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 24px; }
+.ledger-cols > div { min-width: 0; }
+.ledger-cols h4 { font-size: 13px; margin: 0 0 6px; }
+.ledger-rows .total { border-top: 1px solid var(--line); padding-top: 4px; font-weight: 700; }
+.launder, .heat-line { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; font-size: 13.5px; }
+.seg { display: inline-flex; gap: 4px; }
+.btn.on { background: var(--brass); color: #1a1408; border-color: var(--brass); }
 .end-turn { margin-top: 14px; width: 100%; padding: 12px; font-size: 16px; font-family: var(--display); letter-spacing: 0.04em; }
 @media (max-width: 900px) {
   body { padding-bottom: 84px; }

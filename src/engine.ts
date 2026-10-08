@@ -145,6 +145,11 @@ export function cancelAttack(s: GameState, districtId: string): ActionResult {
   return ok;
 }
 
+export function setLaunderRate(s: GameState, rate: number): ActionResult {
+  s.launderRate = rate;
+  return ok;
+}
+
 export function toggleLowProfile(s: GameState): ActionResult {
   s.lowProfile = !s.lowProfile;
   return ok;
@@ -242,49 +247,79 @@ function casualties(s: GameState, men: Member[], pInjured: number, pKilled: numb
 }
 
 // ---------- Économie ----------
+export interface Settlement {
+  dirtyIn: number;
+  cleanIn: number;
+  salaries: number;
+  salDirty: number;
+  salClean: number;
+  unpaid: number;
+  launderTaken: number; // argent sale envoyé au blanchiment
+  launderGiven: number; // argent propre récupéré
+  launderCap: number;
+  bribes: number;
+  bribesOk: boolean;
+  dirtyNet: number;
+  cleanNet: number;
+}
+
+/**
+ * Calcule les flux de la semaine sans rien modifier.
+ * Ordre : revenus → salaires (sale d'abord, puis propre) → blanchiment du sale restant → enveloppes (propre).
+ * Utilisé à la fois par le moteur et par le tableau des prévisions, pour qu'ils ne divergent jamais.
+ */
+export function settle(s: GameState): Settlement {
+  const p = projection(s);
+  let dirty = s.dirty + p.dirtyIn;
+  let clean = s.clean + p.cleanIn;
+
+  let due = p.salaries;
+  const salDirty = Math.min(dirty, due);
+  dirty -= salDirty;
+  due -= salDirty;
+  const salClean = Math.min(clean, due);
+  clean -= salClean;
+  due -= salClean;
+
+  const cap = Math.round(p.launderCap * (s.launderRate ?? 1));
+  const launderTaken = Math.min(dirty, cap);
+  const launderGiven = Math.round(launderTaken * (1 - LAUNDER_FEE));
+  dirty -= launderTaken;
+  clean += launderGiven;
+
+  const bribesOk = clean >= p.bribes;
+  if (bribesOk) clean -= p.bribes;
+
+  return {
+    dirtyIn: p.dirtyIn, cleanIn: p.cleanIn, salaries: p.salaries, salDirty, salClean, unpaid: due,
+    launderTaken, launderGiven, launderCap: cap, bribes: p.bribes, bribesOk,
+    dirtyNet: dirty - s.dirty, cleanNet: clean - s.clean,
+  };
+}
+
 function economy(s: GameState) {
   const p = projection(s);
-  s.dirty += p.dirtyIn;
-  s.clean += p.cleanIn;
-  if (p.dirtyIn) log(s, 'money', `Les rackets rapportent ${fmt(p.dirtyIn)} d'argent sale.`);
+  const f = settle(s);
+  s.dirty += f.dirtyNet;
+  s.clean += f.cleanNet;
+  s.stats.laundered += f.launderGiven;
+  if (f.dirtyIn) log(s, 'money', `Les rackets rapportent ${fmt(f.dirtyIn)} d'argent sale.`);
   if (s.lowProfile) log(s, 'neutral', 'Profil bas : tous les commerces illégaux sont restés fermés.');
+  if (f.launderTaken > 0) log(s, 'money', `${fmt(f.launderTaken)} d'argent sale blanchis via tes façades (+${fmt(f.launderGiven)} propre).`);
 
-  // blanchiment
-  const amount = Math.min(s.dirty, p.launderCap);
-  if (amount > 0) {
-    const cleaned = Math.round(amount * (1 - LAUNDER_FEE));
-    s.dirty -= amount;
-    s.clean += cleaned;
-    s.stats.laundered += cleaned;
-    log(s, 'money', `${fmt(amount)} blanchis via tes façades (+${fmt(cleaned)} propre).`);
-  }
-
-  // salaires (sale d'abord, puis propre)
-  let due = p.salaries;
-  const fromDirty = Math.min(s.dirty, due);
-  s.dirty -= fromDirty;
-  due -= fromDirty;
-  const fromClean = Math.min(s.clean, due);
-  s.clean -= fromClean;
-  due -= fromClean;
-  if (due > 0) {
+  if (f.unpaid > 0) {
     activeMembers(s).forEach((m) => (m.loyalty = clamp(m.loyalty - 15, 0, 100)));
-    log(s, 'bad', `Impossible de payer tous tes hommes (il manque ${fmt(due)}). La grogne monte.`);
+    log(s, 'bad', `Impossible de payer tous tes hommes (il manque ${fmt(f.unpaid)}). La grogne monte.`);
   } else {
     activeMembers(s).forEach((m) => (m.loyalty = clamp(m.loyalty + 1, 0, 100)));
   }
 
-  // pots-de-vin (propre uniquement)
-  if (p.bribes > 0) {
-    if (s.clean >= p.bribes) {
-      s.clean -= p.bribes;
-    } else {
-      owned(s).forEach((d) => (d.bribedCop = false));
-      s.judge = false;
-      s.councilman = false;
-      s.heat = clamp(s.heat + 8, 0, 100);
-      log(s, 'police', "Pas assez d'argent propre pour les enveloppes : flics, juge et élus te lâchent (+8 heat).");
-    }
+  if (f.bribes > 0 && !f.bribesOk) {
+    owned(s).forEach((d) => (d.bribedCop = false));
+    s.judge = false;
+    s.councilman = false;
+    s.heat = clamp(s.heat + 8, 0, 100);
+    log(s, 'police', "Pas assez d'argent propre pour les enveloppes : flics, juge et élus te lâchent (+8 heat).");
   }
 
   // heat

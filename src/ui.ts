@@ -140,20 +140,45 @@ function mapView() {
 
 function weekCard() {
   const p = projection(s);
-  const launder = Math.min(s.dirty + p.dirtyIn, p.launderCap);
+  const f = E.settle(s);
   const net = p.heatGain - 3 + (s.councilman ? -3 : 0) + (s.lowProfile ? -6 : 0);
   const blocked = !!s.pendingEvent || s.status !== 'playing';
+  const rate = s.launderRate ?? 1;
+  const sign = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '') + money(Math.abs(n));
+  const row = (label: string, n: number, cls: string) =>
+    n ? `<span>${label}</span><span class="num ${cls}">${sign(n)}</span>` : '';
+  const rates: [number, string][] = [[1, 'Max'], [0.5, 'Moitié'], [0, 'Arrêt']];
   return `
   <div class="week-card">
     <h3>Prévisions de la semaine</h3>
-    <div class="ledger-rows">
-      <span>Rackets et commerces illégaux</span><span class="num dirty">+${money(p.dirtyIn)}</span>
-      <span>Commerces légaux</span><span class="num clean">+${money(p.cleanIn)}</span>
-      <span>Blanchiment (capacité ${money(p.launderCap)}, ${Math.round(LAUNDER_FEE * 100)} % de commission)</span><span class="num clean">+${money(launder * (1 - LAUNDER_FEE))}</span>
-      <span>Salaires des hommes</span><span class="num dirty">−${money(p.salaries)}</span>
-      <span>Enveloppes (flics, juge, élus)</span><span class="num clean">−${money(p.bribes)}</span>
-      <span>Variation de heat (hors combats)</span><span class="num ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span>
+    <div class="ledger-cols">
+      <div>
+        <h4 class="dirty">Argent sale</h4>
+        <div class="ledger-rows">
+          ${row('Rackets et commerces illégaux', f.dirtyIn, 'dirty')}
+          ${row('Salaires', -f.salDirty, 'dirty')}
+          ${row('Envoyé au blanchiment', -f.launderTaken, 'dirty')}
+          <span class="total">Bilan</span><span class="num total ${f.dirtyNet < 0 ? 'danger' : 'dirty'}">${sign(f.dirtyNet)}</span>
+        </div>
+      </div>
+      <div>
+        <h4 class="clean">Argent propre</h4>
+        <div class="ledger-rows">
+          ${row('Commerces légaux', f.cleanIn, 'clean')}
+          ${row(`Blanchiment (−${Math.round(LAUNDER_FEE * 100)} % de commission)`, f.launderGiven, 'clean')}
+          ${row('Salaires (faute de sale)', -f.salClean, 'clean')}
+          ${row('Enveloppes', -f.bribes, 'clean')}
+          <span class="total">Bilan</span><span class="num total ${f.cleanNet < 0 ? 'danger' : 'clean'}">${sign(f.cleanNet)}</span>
+        </div>
+      </div>
     </div>
+    ${f.unpaid ? `<p class="note danger">Il manquera ${money(f.unpaid)} pour payer tes hommes : leur loyauté va chuter.</p>` : ''}
+    ${!f.bribesOk && f.bribes ? `<p class="note danger">Pas assez d'argent propre pour les enveloppes : tes contacts vont te lâcher.</p>` : ''}
+    ${p.launderCap ? `<div class="launder" role="group" aria-label="Blanchiment">
+      <span>Blanchiment <span class="muted">(capacité ${money(p.launderCap)})</span></span>
+      <span class="seg">${rates.map(([r, l]) => `<button class="btn small ${rate === r ? 'on' : ''}" data-act="launder" data-id="${r}" aria-pressed="${rate === r}">${l}</button>`).join('')}</span>
+    </div>` : ''}
+    <div class="heat-line"><span>Variation de heat (hors combats)</span><span class="num ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span></div>
     <div class="end-dock">
       <button class="btn primary end-turn" data-act="end" ${blocked ? 'disabled' : ''}>
         ${s.orders.length ? `Fin de semaine · ${s.orders.length} assaut${s.orders.length > 1 ? 's' : ''}` : 'Fin de semaine'}
@@ -480,6 +505,7 @@ app.addEventListener('click', (ev) => {
     case 'judge': return run(E.toggleJudge(s));
     case 'council': return run(E.toggleCouncil(s));
     case 'low': return run(E.toggleLowProfile(s));
+    case 'launder': return run(E.setLaunderRate(s, Number(id)));
     case 'hire': return run(E.hire(s, Number(id)));
     case 'fire': {
       if (confirmed(`fire-${id}`)) run(E.fire(s, Number(id)));

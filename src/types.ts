@@ -132,6 +132,8 @@ export interface GameState {
   judge: boolean;
   councilman: boolean;
   lowProfile: boolean; // profil bas cette semaine
+  /** part de la capacité de blanchiment utilisée : 1 = max, 0.5 = moitié, 0 = rien */
+  launderRate?: number;
   pendingEvent: PendingEvent | null;
   log: LogEntry[];
   lastReport: LogEntry[];
