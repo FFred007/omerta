@@ -66,6 +66,7 @@ export function buildBlocker(s: GameState, d: District, kind: BusinessKind): str
   if (d.owner !== 'player') return "Ce quartier n'est pas à toi.";
   if (def.city && cityOf(d) !== def.city) return `Uniquement dans ${def.city === 'halloran' ? 'Port Halloran' : def.city === 'mirage' ? 'Mirage Springs' : 'Washburn'}.`;
   if (def.minRespect && s.respect < def.minRespect) return `Il faut ${def.minRespect} de respect.`;
+  if (def.city && countOwned(s, kind) >= 1) return `Un seul ${def.name.toLowerCase()} par famille.`;
   if (d.businesses.length >= d.slots) return 'Plus de place dans ce quartier.';
   if ((def.currency === 'dirty' ? s.dirty : s.clean) < def.cost) return `Pas assez d'argent ${def.currency === 'dirty' ? 'sale' : 'propre'}.`;
   return null;
