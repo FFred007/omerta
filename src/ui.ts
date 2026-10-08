@@ -10,6 +10,7 @@ import * as HU from './hunters';
 import * as HE from './heist';
 import { activeVendettas } from './vendetta';
 import * as BL from './buildings';
+import * as CA from './career';
 import { SLOT_MAX, UPGRADES } from './data';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
@@ -33,7 +34,7 @@ import {
 } from './state';
 import type { BusinessKind, District, Escort, GameState, Good, Job, Member, Owner, RivalFamily, Tariff } from './types';
 
-type Tab = 'quartier' | 'don' | 'business' | 'coups' | 'famille' | 'villes' | 'commission' | 'corruption' | 'rivaux' | 'journal';
+type Tab = 'quartier' | 'missions' | 'relations' | 'don' | 'business' | 'coups' | 'famille' | 'villes' | 'commission' | 'corruption' | 'rivaux' | 'journal';
 
 const ui = {
   tab: 'quartier' as Tab,
@@ -42,6 +43,8 @@ const ui = {
   attackers: new Set<number>(),
   expedition: new Set<number>(), // équipe pour prendre pied dans une ville
   showIntro: false,
+  newGame: false, // l'intro sert à créer la partie
+  setup: { mode: 'career' as 'career' | 'don', origin: 'rues', first: 'Tony', last: 'Bianchi', classic: false },
   toast: '',
   toastTimer: 0,
   confirm: '', // clé du bouton en attente de confirmation
@@ -61,7 +64,7 @@ const SPEEDS = [1, 2, 3];
 const DAY_MS = 2600; // durée d'un jour à vitesse ×1
 
 let s: GameState = load() ?? E.startGame();
-if (s.week === 1 && s.log.length <= 1) ui.showIntro = true;
+if (s.week === 1 && s.log.length <= 1) { ui.showIntro = true; ui.newGame = true; }
 ui.city = CT.donCity(s);
 if (CT.cityOf(district(s, ui.selected)) !== ui.city) ui.selected = CT.ownedIn(s, ui.city)[0]?.id ?? ui.selected;
 ui.shown = { dirty: s.dirty, clean: s.clean, respect: s.respect };
@@ -84,7 +87,8 @@ function ownerColor(o: Owner) {
   return rival(s, o)!.color;
 }
 function ownerName(o: Owner) {
-  if (o === 'player') return s.familyName;
+  if (o === 'player') return CA.inCareer(s) ? 'Ton quartier' : s.familyName;
+  if (rival(s, o)?.employer) return `${rival(s, o)!.name} (ta famille)`;
   if (o === 'neutral') return 'Indépendants';
   return rival(s, o)!.name;
 }
@@ -276,7 +280,7 @@ function topbar() {
     <div class="brand">
       ${donOf(s) ? `<button class="brand-don" data-act="tab" data-id="don" aria-label="Voir le Don">${memberPortrait(donOf(s)!, 40)}</button>` : ''}
       <h1>Omertà</h1>
-      <span class="date">${esc(s.familyName)} · ${s.commission?.chair ? 'Capo dei Capi' : rankOf(s.respect)} · semaine ${s.week} · ${donOf(s) ? 'le Don' : 'la famille'} à ${esc(CT.cityName(CT.donCity(s)))}</span>
+      <span class="date">${CA.inCareer(s) ? `${esc(donOf(s)?.name ?? '')} · ${CA.RANK_LABEL[CA.careerRank(s)]} de la ${esc(s.familyName)} · semaine ${s.week} · confiance du Don ${s.career!.trust}/100` : `${esc(s.familyName)} · ${s.commission?.chair ? 'Capo dei Capi' : rankOf(s.respect)} · semaine ${s.week} · ${donOf(s) ? 'le Don' : 'la famille'} à ${esc(CT.cityName(CT.donCity(s)))}`}</span>
     </div>
     <div class="ledger-strip">
       <div class="stat stat-dirty"><span class="k">Argent sale</span><span class="v dirty">${money(ui.shown.dirty)}</span></div>
@@ -329,7 +333,7 @@ function mapView() {
     })
     .join('');
   const legend = [
-    `<span><i style="background:var(--player)"></i>${esc(s.familyName)}</span>`,
+    `<span><i style="background:var(--player)"></i>${CA.inCareer(s) ? 'Ton quartier' : esc(s.familyName)}</span>`,
     ...CT.rivalsIn(s, ui.city).filter((r) => r.alive).map((r) => `<span><i style="background:${r.color}"></i>${esc(r.name)}${r.alliance ? ' (allié)' : r.war ? ' (guerre)' : ''}</span>`),
     `<span><i style="background:var(--neutral)"></i>Indépendants</span>`,
   ].join('');
@@ -357,6 +361,10 @@ function mapView() {
 function cityStatus(id: string) {
   const all = CT.cityDistricts(s, id).length;
   const mine = CT.ownedIn(s, id).length;
+  if (CA.inCareer(s)) {
+    const fam = CT.cityDistricts(s, id).filter((d) => d.owner === CA.EMPLOYER_ID).length;
+    return id === 'corrano' ? `la ${esc(s.familyName)} tient ${fam + mine} quartier${fam + mine > 1 ? 's' : ''} sur ${all}${mine ? `, dont ${mine} à toi` : ''}` : 'hors de portée tant que tu n’es pas Don';
+  }
   if (!CT.isOpen(s, id)) return 'la famille n’y est pas implantée';
   const h = CT.holder(s, id);
   const gov = CT.governor(s, id);
@@ -366,7 +374,7 @@ function cityStatus(id: string) {
 function cityTabs() {
   return `<div class="city-tabs" role="tablist" aria-label="Villes">${CITIES.map((c) => {
     const open = CT.isOpen(s, c.id);
-    const mine = CT.ownedIn(s, c.id).length;
+    const mine = CA.inCareer(s) ? CT.cityDistricts(s, c.id).filter((d) => d.owner === 'player' || d.owner === CA.EMPLOYER_ID).length : CT.ownedIn(s, c.id).length;
     const don = CT.donCity(s) === c.id;
     const warn = open && !CT.holder(s, c.id);
     return `<button class="city-tab ${ui.city === c.id ? 'active' : ''} ${open ? 'open' : 'closed'}" role="tab" aria-selected="${ui.city === c.id}" data-act="city" data-id="${c.id}">
@@ -393,6 +401,7 @@ function weekCard() {
           ${row(`Ventes d'alcool (${crates} caisses)`, p.booze, 'dirty')}
           ${row('Tripots, paris, entrées des bars', p.fixed, 'dirty')}
           ${row('Salaires', -f.salDirty, 'dirty')}
+          ${row(`Tribut au Don (${Math.round((s.career?.kickup ?? 0.3) * 100)} %)`, -f.tribute, 'dirty')}
           ${row('Envoyé au blanchiment', -f.launderTaken, 'dirty')}
           <span class="total">Bilan</span><span class="num total ${f.dirtyNet < 0 ? 'danger' : 'dirty'}">${sign(f.dirtyNet)}</span>
         </div>
@@ -482,9 +491,13 @@ function heatBlock(always: boolean) {
 
 function tabs() {
   const injured = s.members.filter((m) => m.status !== 'actif').length;
-  const items: [Tab, string, string][] = [
+  const career = CA.inCareer(s);
+  const r = CA.careerRank(s);
+  const items0: [Tab, string, string][] = [
     ['quartier', 'Quartier', ''],
-    ['don', s.regency ? 'Régence' : donOf(s)?.sex === 'f' ? 'La Donna' : 'Le Don', donOf(s)?.points ? `+${donOf(s)!.points}` : s.spouse?.pregnantWeeks ? '♥' : ''],
+    ['missions', 'Missions', career ? String(s.career!.missions.length) : ''],
+    ['relations', 'Relations', career && s.career!.dying ? '!' : ''],
+    ['don', career ? 'Toi' : s.regency ? 'Régence' : donOf(s)?.sex === 'f' ? 'La Donna' : 'Le Don', donOf(s)?.points ? `+${donOf(s)!.points}` : s.spouse?.pregnantWeeks ? '♥' : ''],
     ['business', 'Alcool', salesPlan(s).shortage ? '!' : ''],
     ['coups', 'Coups', `${s.jobs.length}${s.heist ? '+1' : ''}${activeVendettas(s).length ? ' !' : ''}`],
     ['famille', 'Famille', `${activeMembers(s).length}${injured ? `+${injured}` : ''}`],
@@ -494,6 +507,11 @@ function tabs() {
     ['rivaux', 'Rivaux', s.rivals.some((r) => r.war) ? 'guerre' : ''],
     ['journal', 'Journal', ''],
   ];
+  const hide = new Set<Tab>(career ? ['villes', 'commission'] : ['missions', 'relations']);
+  if (career && r === 'associe') hide.add('famille');
+  if (career && (r === 'associe' || r === 'soldat')) { hide.add('business'); hide.add('rivaux'); }
+  const items = items0.filter(([id]) => !hide.has(id)).map(([id, l, c]): [Tab, string, string] => [id, career && id === 'coups' ? 'Combines' : career && id === 'famille' ? 'Équipe' : l, c]);
+  if (hide.has(ui.tab)) ui.tab = career ? 'missions' : 'quartier';
   return `<nav class="tabs" role="tablist">${items
     .map(([id, label, count]) => `<button class="tab ${ui.tab === id ? 'active' : ''}" role="tab" aria-selected="${ui.tab === id}" data-act="tab" data-id="${id}">${label}${count ? `<span class="count">${count}</span>` : ''}</button>`)
     .join('')}</nav>`;
@@ -502,6 +520,8 @@ function tabs() {
 function panel() {
   switch (ui.tab) {
     case 'quartier': return districtPanel(district(s, ui.selected));
+    case 'missions': return missionsPanel();
+    case 'relations': return relationsPanel();
     case 'don': return donPanel();
     case 'business': return businessPanel();
     case 'coups': return jobsPanel();
@@ -942,14 +962,15 @@ function donPanel() {
       </div>
     </div>
     <div class="dstats">${stats}</div>
-    <div class="box-note">
+    ${CA.inCareer(s) ? `<div class="box-note"><b>Ton personnage.</b> Poigne, Ombre, Verbe et Flair décident de tes missions. Chaque niveau te donne 1 point : une stat ou un talent. Tu gagnes le double d'expérience des autres hommes.</div>` : ''}
+    <div class="box-note" ${CA.inCareer(s) ? 'hidden' : ''}>
       <b>Au front.</b> Ajoute le Don à un assaut ou à un coup comme n'importe quel homme : +${2} par homme à ses côtés en assaut (+1 sur un coup), +2 respect si l'assaut réussit. Mais il est vu sur les lieux (+5 heat), peut être blessé, arrêté ou tué. S'il meurt sans héritier, la partie est finie.
     </div>
     <h4>Talents</h4>
     <div class="branches">${branches}</div>
     ${familyBlock()}
     ${dynastyBlock()}
-    ${endingBlock()}`;
+    ${CA.inCareer(s) ? '' : endingBlock()}`;
 }
 
 function familyBlock() {
@@ -1066,6 +1087,7 @@ function familyPanel() {
     <h3>La famille</h3>
     <p class="flavor">Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat qu'il utilise le plus ; tous les deux niveaux, un nouveau trait. Un homme mal payé finit par parler : sous 25 de loyauté, il peut trahir.</p>
     ${s.members.length ? s.members.map(memberRow).join('') : '<p class="empty">Plus personne. Recrute avant que la ville ne l\'apprenne.</p>'}
+    ${CA.inCareer(s) ? `<p class="note">À ton rang (${CA.RANK_LABEL[CA.careerRank(s)]}), tu peux avoir ${CA.CREW_MAX[CA.careerRank(s)]} hommes sous tes ordres. Tu paies leur salaire.</p>` : ''}
     <h4>Recrues de la semaine <span class="muted">· nouvelle liste chaque lundi</span></h4>
     <div class="rows">${s.recruits.map((r) => {
       const cost = recruitCost(s, r);
@@ -1209,6 +1231,90 @@ function endingBlock() {
     ${retireWhy ? `<p class="note">${esc(retireWhy)}</p>` : ''}`;
 }
 
+
+// ---------- L'ascension ----------
+function trustMeter(v: number, label = 'Confiance du Don') {
+  return `<div class="mood-meter wide" role="meter" aria-valuenow="${v}" aria-valuemin="0" aria-valuemax="100" aria-label="${label}"><i style="width:${v}%;background:${v < 30 ? 'var(--oxblood-bright)' : v < 60 ? 'var(--brass)' : 'var(--good)'}"></i></div>`;
+}
+
+function missionsPanel() {
+  const c = s.career;
+  if (!c) return '';
+  const p = CA.player(s);
+  const r = c.rank;
+  const pr = CA.PROMOTION[r];
+  const crewPool = activeMembers(s).filter((m) => !m.isDon);
+  const progress = pr ? `
+    <div class="promo">
+      <b>Prochain rang : ${CA.RANK_LABEL[pr.next]}</b>
+      <ul class="checklist">
+        <li class="${c.trust >= pr.trust ? 'done' : ''}">Confiance du Don ${c.trust}/${pr.trust}</li>
+        <li class="${c.missionsDone >= pr.missions ? 'done' : ''}">Missions réussies à ce rang ${c.missionsDone}/${pr.missions}</li>
+        <li class="${s.week >= pr.week ? 'done' : ''}">Semaine ${s.week}/${pr.week}</li>
+      </ul>
+    </div>` : r === 'capo' ? `<div class="promo"><b>Le trône</b><p class="note">Le Don a ${theDonAge()} ans. Sa santé : ${c.donHealth}/100${c.dying ? ' — <span class="danger">il est mourant, la succession approche</span>' : ''}. Quand il partira, les capos et les anciens voteront : prépare tes voix dans l'onglet Relations.</p>${trustMeter(c.donHealth, 'Santé du Don')}</div>` : '';
+  const list = c.missions.map((m) => {
+    const ch = CA.missionChance(s, m);
+    const skill = CA.missionSkill(s, m);
+    const crewOk = CA.missionCrewAllowed(m) && r !== 'associe';
+    return `<article class="job ${m.accepted ? 'staffed' : ''}">
+      <div class="job-head"><b>${esc(m.title)}</b><span class="tag">${CA.STAT_LABEL[m.stat]} · difficulté ${m.difficulty}</span></div>
+      <p>${esc(m.text)}</p>
+      <div class="job-meta">
+        <span>Ordre de ${esc(m.giver)} · ta part : <span class="dirty">${money(m.reward.dirty)}</span> · confiance +${m.reward.trust}${m.reward.respect ? ` · +${m.reward.respect} respect` : ''}</span>
+        <span>Si ça rate : confiance −${m.failTrust}${m.failHeat ? `, <span class="danger">+${m.failHeat} heat</span>` : ''}${m.danger >= 0.3 ? `, risque de ${m.stat === 'force' ? 'blessure' : 'garde à vue'}` : ''}</span>
+      </div>
+      <label class="check"><input type="checkbox" data-act="mission" data-id="${m.id}" ${m.accepted ? 'checked' : ''} ${p?.status !== 'actif' ? 'disabled' : ''}><span><b>Accepter la mission</b> <span class="muted">· refuser coûte 1 de confiance</span></span></label>
+      ${m.accepted && crewOk && crewPool.length ? `<div class="team">${crewPool.map((x) => `<label class="check"><input type="checkbox" data-act="mission-crew" data-job="${m.id}" data-id="${x.id}" ${m.crew.includes(x.id) ? 'checked' : ''}><span>${esc(x.nickname)} <span class="muted">· ${m.stat === 'force' ? 'F' : 'D'}${m.stat === 'force' ? x.force : x.discretion} (compte pour moitié)</span></span></label>`).join('')}</div>` : ''}
+      ${m.accepted && r !== 'capo' ? `<label class="check"><input type="checkbox" data-act="mission-skim" data-id="${m.id}" ${m.skim ? 'checked' : ''}><span>Te servir dans la caisse <span class="muted">· +${Math.round(CA.SKIM_BONUS * 100)} % pour toi, ${pct(CA.skimRisk(s))} d’être découvert (confiance −20, tu perds tout)</span></span></label>` : ''}
+      <div class="odds" style="--odds:${oddsTone(ch)}">Toi${m.crew.length ? ' et tes hommes' : ''} <b class="num">${skill}</b> contre <b class="num">${m.difficulty}</b> · <b style="color:${oddsTone(ch)}">${pct(ch)}</b></div>
+    </article>`;
+  }).join('');
+  const kick = r === 'capo' ? `<div class="launder" role="group" aria-label="Tribut au Don"><span>Tribut au Don <span class="muted">· ta part des revenus du quartier</span></span><span class="seg">
+    ${[[0.2, '20 % · confiance −2/sem.'], [0.3, '30 % · +1'], [0.4, '40 % · +2']].map(([v, l]) => `<button class="btn small ${c.kickup === v ? 'on' : ''}" data-act="kickup" data-id="${v}" aria-pressed="${c.kickup === v}">${l}</button>`).join('')}</span></div>` : '';
+  return `
+    <h3>${CA.RANK_LABEL[r]} de la ${esc(s.familyName)}</h3>
+    <p class="flavor">${r === 'associe' ? `Tu n'es encore personne. ${esc(CA.notable(s, 'mentor')?.name ?? 'Ton capo')} te donne du travail : fais-le bien, et le Don entendra parler de toi.` : r === 'soldat' ? 'Tu es un homme d’honneur. Tes hommes peuvent t’accompagner sur les missions de force et de discrétion.' : 'Tu tiens un quartier pour la famille. Fais-le prospérer, verse ta part, et prépare la succession.'}</p>
+    <div class="aff">Confiance du Don <b>${c.trust}/100</b> ${trustMeter(c.trust)}</div>
+    ${progress}
+    ${kick}
+    <h4>Les missions de la semaine <span class="muted">· ${c.missions.filter((m) => m.accepted).length}/${CA.MAX_MISSIONS} acceptées</span></h4>
+    ${p?.status !== 'actif' ? `<p class="note danger">Tu es ${p?.status === 'prison' ? 'en prison' : 'blessé'} (${p?.statusWeeks} sem.) : pas de mission cette semaine, et pas de pénalité.</p>` : ''}
+    ${list || '<p class="empty">Pas de mission cette semaine.</p>'}
+    <p class="note">Tes stats décident de tout : Poigne pour la force, Ombre pour la discrétion, Verbe pour parler, Flair pour les affaires. Chaque niveau te donne un point à placer (onglet Toi).</p>
+    ${c.history.filter((h) => h.text !== 'indic' && h.text !== 'gendre').length ? `<h4>Ton parcours</h4><ul class="log">${c.history.filter((h) => h.text !== 'indic' && h.text !== 'gendre').map((h) => `<li class="tone-good"><span class="w">S${h.week}</span>${esc(h.text)}</li>`).join('')}</ul>` : ''}`;
+}
+const theDonAge = () => (CA.theDon(s)?.age ?? 66) + Math.floor((s.week - 1) / 6);
+
+function relationsPanel() {
+  const c = s.career;
+  if (!c) return '';
+  const t = CA.successionTally(s);
+  const roleName: Record<string, string> = { don: 'le Don', consigliere: 'consigliere', capo: 'capo', ancien: 'ancien' };
+  const cost = CA.giftCost(s);
+  const rows = c.notables.map((n) => {
+    const voter = t.voters.includes(n);
+    const forMe = n.affinity > (n.rivalPull ?? 25);
+    const vote = n.role === 'don' ? '' : n.favori ? '<span class="danger">ton rival pour la succession</span>' : voter ? (forMe ? '<span class="clean">votera pour toi</span>' : `<span class="muted">votera pour ${esc(t.fav?.name ?? 'un autre')} (il lui faut ${(n.rivalPull ?? 25) + 1} d’affinité)</span>`) : '';
+    const cd = n.lastGift !== undefined && s.week - n.lastGift < 2;
+    return `<div class="person">${portrait({ seed: n.seed, size: 52, age: n.age + Math.floor((s.week - 1) / 6), sex: 'm', rank: n.role === 'don' ? 'boss' : n.role === 'capo' ? 'capo' : 'soldat' })}<div class="grow">
+      <b>${esc(n.name)}</b> <span class="muted">« ${esc(n.nickname)} » · ${roleName[n.role]}${n.id === 'mentor' ? ' · ton mentor' : ''}</span>
+      <div class="aff">Affinité ${n.affinity} ${relationMeterValue(n.affinity)}</div>
+      ${vote ? `<small>${vote}</small>` : ''}
+      ${n.favori ? '' : `<div class="diplo"><button class="btn small" data-act="gift" data-id="${n.id}" ${cd || s.dirty + s.clean < cost ? 'disabled' : ''}>Un cadeau · ${money(cost)}${cd ? ' (attends)' : ''}</button></div>`}
+    </div></div>`;
+  }).join('');
+  return `
+    <h3>La famille ${esc(s.familyName.replace(/^Famille /, ''))}</h3>
+    <p class="flavor">Le Don, son consigliere, les capos et les anciens. Leur affinité décide de ta carrière, et à la mort du Don, ils votent : il te faudra ${t.needed} voix sur ${t.voters.length} contre ${esc(t.fav?.name ?? 'le favori')}. Les cadeaux, les services rendus et un bon mariage font monter l'affinité ; le Verbe la fait monter plus vite.</p>
+    <div class="facts"><span>Voix pour toi aujourd'hui <b>${t.mine.length}/${t.voters.length}</b></span><span>Santé du Don <b>${c.donHealth}/100</b></span>${c.lost ? `<span>Don actuel <b>${esc(c.lost)}</b></span>` : ''}</div>
+    ${rows}`;
+}
+function relationMeterValue(v: number) {
+  const left = v < 0 ? 50 + v / 2 : 50;
+  return `<div class="rel" role="meter" aria-valuenow="${v}" aria-valuemin="-100" aria-valuemax="100"><i style="left:${left}%;width:${Math.abs(v) / 2}%;background:${v >= 0 ? 'var(--good)' : 'var(--oxblood)'}"></i><b></b></div>`;
+}
+
 // ---------- Corruption ----------
 function dossierBlock() {
   const d = Math.round(s.dossier ?? 0);
@@ -1311,7 +1417,7 @@ function rivalsPanel() {
   return `
     <h3>Les familles</h3>
     <p class="flavor">Ta force de frappe : <b>${myForce}</b>. Une relation haute les dissuade de t'attaquer ; une guerre double leur agressivité.</p>
-    ${CITIES.map((c) => `<h4>${esc(c.name)}</h4>` + CT.rivalsIn(s, c.id).map((r) => {
+    ${CITIES.map((c) => `<h4>${esc(c.name)}</h4>` + CT.rivalsIn(s, c.id).filter((r) => r.alive || r.id !== CA.EMPLOYER_ID).map((r) => {
       const terr = owned(s, r.id).map((d) => d.name).join(', ');
       if (!r.alive) return `<div class="rival"><div class="rival-name" style="color:${r.color}">${esc(r.name)} <span class="muted">· éliminée</span></div><div class="boss">${esc(r.boss)} a quitté la ville.</div></div>`;
       const cd = r.talkCooldown ? ` (${r.talkCooldown} sem.)` : '';
@@ -1329,7 +1435,7 @@ function rivalsPanel() {
         </div>
         <div class="meter"><i style="width:${clamp((r.strength / max) * 100, 4, 100)}%;background:${r.color}"></i></div>
         ${relationMeter(r)}
-        <div class="diplo">
+        ${CA.inCareer(s) ? '' : `<div class="diplo">
           ${r.war
             ? `<button class="btn small" data-act="peace" data-id="${r.id}" ${s.clean >= D.PEACE_COST ? '' : 'disabled'}>Négocier la paix · ${money(D.PEACE_COST)} propre</button>`
             : `<button class="btn small" data-act="sitdown" data-id="${r.id}" ${!r.talkCooldown && s.clean >= D.SIT_DOWN_COST ? '' : 'disabled'}>Dîner d'affaires · ${money(D.SIT_DOWN_COST)}${cd}</button>
@@ -1339,7 +1445,7 @@ function rivalsPanel() {
                  ? `<button class="btn small danger" data-act="break" data-id="${r.id}">${ui.confirm === `break-${r.id}` ? 'Confirmer la rupture' : "Rompre l'alliance"}</button>`
                  : `<button class="btn small" data-act="ally" data-id="${r.id}" ${r.relation >= D.ALLIANCE_MIN ? '' : 'disabled'} title="Relation ${D.ALLIANCE_MIN} requise">Proposer une alliance</button>`}
                <button class="btn small danger" data-act="war" data-id="${r.id}">${ui.confirm === `war-${r.id}` ? 'Confirmer la guerre' : 'Déclarer la guerre'}</button>`}
-        </div>
+        </div>`}
       </div>`;
     }).join('')).join('')}`;
 }
@@ -1379,18 +1485,42 @@ function modals() {
       <div class="actions"><button class="btn primary" data-act="restart-confirm">Nouvelle partie</button></div>
     </div></div>`;
   }
+  if (ui.showIntro && ui.newGame) {
+    const st = ui.setup;
+    const o = CA.originDef(st.origin);
+    return `<div class="overlay"><div class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="intro-t">
+      <h2 id="intro-t">New Corrano</h2>
+      <p>La Prohibition a fait de New Corrano une ville d'or et de sang. Les Castellano, les Irlandais de Kilbride, le clan Wolska et la Famille Moretti se partagent les rues. Plus loin, Port Halloran, Mirage Springs et Washburn attendent leur heure.</p>
+      ${SC.readBest() ? `<p class="muted">Ton record : ${SC.readBest()} points.</p>` : ''}
+      <div class="launder" role="group" aria-label="Mode"><span>Ta partie</span><span class="seg">
+        <button class="btn small ${st.mode === 'career' ? 'on' : ''}" data-act="setup-mode" data-id="career" aria-pressed="${st.mode === 'career'}">L'ascension</button>
+        <button class="btn small ${st.mode === 'don' ? 'on' : ''}" data-act="setup-mode" data-id="don" aria-pressed="${st.mode === 'don'}">Partie rapide : commencer Don</button></span></div>
+      ${st.mode === 'career' ? `
+        <p class="note">Tu commences tout en bas : associé de la Famille Moretti. Missions, confiance du Don, baptême, un quartier à toi… et un jour, peut-être, le trône.</p>
+        <div class="setup-names">
+          <label>Prénom<input id="first" type="text" value="${esc(st.first)}" maxlength="18"></label>
+          <label>Nom<input id="last" type="text" value="${esc(st.last)}" maxlength="18"></label>
+        </div>
+        <h4>Ton origine</h4>
+        <div class="origins">${CA.ORIGINS.map((x) => `<button class="origin ${x.id === st.origin ? 'on' : ''}" data-act="setup-origin" data-id="${x.id}" aria-pressed="${x.id === st.origin}">
+          <b>${esc(x.name)}</b><span class="muted">« ${esc(x.nickname)} »</span>
+          <small>Poigne ${x.stats.force} · Ombre ${x.stats.discretion} · Verbe ${x.stats.verbe} · Flair ${x.stats.flair}</small>
+          <small class="trait">${esc(TRAITS[x.trait].name)} : ${esc(TRAITS[x.trait].desc)}</small></button>`).join('')}</div>
+        <p class="flavor">${esc(o.desc)}</p>` : `
+        <p class="note">Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy et quatre hommes. Tout est débloqué tout de suite.</p>
+        <label for="fam" class="muted" style="font-size:13px">Nom de ta famille</label>
+        <input id="fam" type="text" value="${esc(s.familyName)}" maxlength="32">`}
+      <div class="launder" role="group" aria-label="Carte"><span>La carte</span><span class="seg">
+        <button class="btn small ${st.classic ? '' : 'on'}" data-act="setup-map" data-id="random" aria-pressed="${!st.classic}">Au hasard</button>
+        <button class="btn small ${st.classic ? 'on' : ''}" data-act="setup-map" data-id="classic" aria-pressed="${st.classic}">Classique</button></span></div>
+      <div class="actions"><button class="btn primary" data-act="start">${st.mode === 'career' ? 'Frapper à la porte du capo' : 'Prendre la relève'}</button></div>
+    </div></div>`;
+  }
   if (ui.showIntro) {
     return `<div class="overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="intro-t">
-      <h2 id="intro-t">New Corrano, 1925</h2>
-      <p>Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy, une cave de 45 caisses et quatre hommes. Les Castellano, les Irlandais de Kilbride et le clan Wolska se partagent le reste de la ville. Plus loin, Port Halloran, Mirage Springs et Washburn attendent leur heure.</p>
-      ${SC.readBest() ? `<p class="muted">Ton record : ${SC.readBest()} points.</p>` : ''}
-      <ul class="rules">${rulesList()}</ul>
-      ${s.week === 1 ? `<div class="launder" role="group" aria-label="Carte"><span>La carte</span><span class="seg">
-        <button class="btn small ${s.generatedMap ? 'on' : ''}" data-act="map" data-id="random" aria-pressed="${!!s.generatedMap}">${s.generatedMap ? 'Tirer une autre carte' : 'Carte au hasard'}</button>
-        <button class="btn small ${s.generatedMap ? '' : 'on'}" data-act="map" data-id="classic" aria-pressed="${!s.generatedMap}">Carte classique</button></span></div>` : ''}
-      <label for="fam" class="muted" style="font-size:13px">Nom de ta famille</label>
-      <input id="fam" type="text" value="${esc(s.familyName)}" maxlength="32">
-      <div class="actions"><button class="btn primary" data-act="start">Prendre la relève</button></div>
+      <h2 id="intro-t">Les règles</h2>
+      <ul class="rules">${CA.inCareer(s) ? careerRules() : ''}${rulesList()}</ul>
+      <div class="actions"><button class="btn primary" data-act="close-help">Reprendre</button></div>
     </div></div>`;
   }
   if (s.pendingEvent) {
@@ -1403,6 +1533,13 @@ function modals() {
       </div></div></div>`;
   }
   return '';
+}
+
+function careerRules() {
+  return `
+    <li><b>L'ascension</b> : associé, homme d'honneur, capo, puis Don. Chaque rang demande la confiance du Don, des missions réussies et du temps.</li>
+    <li><b>Missions</b> : ton capo, puis le Don, te donnent 2 ou 3 missions par semaine (2 au plus). Tes stats décident ; te servir dans la caisse rapporte plus, mais gare à l'Ombre.</li>
+    <li><b>Relations</b> : le Don, le consigliere, les capos et les anciens. À la mort du Don, ils votent pour son successeur.</li>`;
 }
 
 function rulesList() {
@@ -1421,6 +1558,13 @@ function rulesList() {
 // =====================================================================
 // Interactions
 // =====================================================================
+function readSetup() {
+  const f = (document.getElementById('first') as HTMLInputElement | null)?.value.trim();
+  const l = (document.getElementById('last') as HTMLInputElement | null)?.value.trim();
+  if (f !== undefined) ui.setup.first = f;
+  if (l !== undefined) ui.setup.last = l;
+}
+
 function toast(msg: string) {
   ui.toast = msg;
   clearTimeout(ui.toastTimer);
@@ -1552,15 +1696,6 @@ app.addEventListener('click', (ev) => {
     case 'vote': return run(CM.setVote(s, (id || null) as 'pour' | 'contre' | null));
     case 'retire': if (confirmed('retire')) run(SC.retire(s)); return;
     case 'legit': if (confirmed('legit')) run(SC.goLegit(s)); return;
-    case 'map': {
-      const name = (document.getElementById('fam') as HTMLInputElement | null)?.value.trim() || s.familyName;
-      s = E.startGame(name.startsWith('Famille') ? name : `Famille ${name}`, id === 'classic');
-      const don = donOf(s);
-      if (don) don.name = `${don.name.split(' ')[0]} ${s.familyName.replace(/^Famille /, '')}`;
-      ui.selected = 'sicily'; ui.city = 'corrano'; ui.feed = [];
-      ui.shown = { dirty: s.dirty, clean: s.clean, respect: s.respect };
-      return render();
-    }
     case 'hunt': {
       const key = el.dataset.confirm;
       if (key && !confirmed(key)) return;
@@ -1573,16 +1708,30 @@ app.addEventListener('click', (ev) => {
     case 'play': ui.playing = !ui.playing; return updateClock();
     case 'speed': s.speed = Number(id); save(s); return render();
     case 'choice': resolveEvent(s, id); return render();
-    case 'help': ui.showIntro = true; return render();
+    case 'help': ui.showIntro = true; ui.newGame = false; return render();
+    case 'close-help': ui.showIntro = false; return render();
+    case 'setup-mode': readSetup(); ui.setup.mode = id as 'career' | 'don'; return render();
+    case 'setup-origin': readSetup(); ui.setup.origin = id; return render();
+    case 'setup-map': readSetup(); ui.setup.classic = id === 'classic'; return render();
+    case 'gift': return run(CA.gift(s, id));
+    case 'kickup': return run(CA.setKickup(s, Number(id)));
     case 'start': {
-      const name = (document.getElementById('fam') as HTMLInputElement | null)?.value.trim();
-      if (name && name !== s.familyName) {
-        s.familyName = name.startsWith('Famille') ? name : `Famille ${name}`;
-        s.log.forEach((e) => (e.text = e.text.replace(/^Famille \S+/, s.familyName)));
+      readSetup();
+      const st = ui.setup;
+      if (st.mode === 'career') {
+        s = CA.startCareer({ first: st.first || 'Tony', last: st.last || 'Bianchi', origin: st.origin, classic: st.classic });
+        ui.tab = 'missions';
+      } else {
+        const name = (document.getElementById('fam') as HTMLInputElement | null)?.value.trim() || 'Famille Moretti';
+        s = E.startGame(name.startsWith('Famille') ? name : `Famille ${name}`, st.classic);
         const don = donOf(s);
-        if (don && s.week === 1) don.name = `${don.name.split(' ')[0]} ${s.familyName.replace(/^Famille /, '')}`;
+        if (don) don.name = `${don.name.split(' ')[0]} ${s.familyName.replace(/^Famille /, '')}`;
+        ui.tab = 'quartier';
       }
+      ui.selected = 'sicily'; ui.city = 'corrano'; ui.feed = [];
+      ui.shown = { dirty: s.dirty, clean: s.clean, respect: s.respect };
       ui.showIntro = false;
+      ui.newGame = false;
       ui.playing = true;
       return render();
     }
@@ -1598,6 +1747,7 @@ app.addEventListener('click', (ev) => {
       ui.tab = 'quartier';
       ui.attackers.clear();
       ui.showIntro = true;
+      ui.newGame = true;
       ui.playing = false;
       ui.progress = 0;
       ui.feed = [];
@@ -1627,6 +1777,12 @@ app.addEventListener('change', (ev) => {
     run(CT.travel(s, Number(el.dataset.id), el.value));
   } else if (act === 'governor') {
     run(CT.setGovernor(s, el.dataset.id!, el.value ? Number(el.value) : null));
+  } else if (act === 'mission') {
+    run(CA.toggleMission(s, Number(el.dataset.id)));
+  } else if (act === 'mission-crew') {
+    run(CA.toggleMissionCrew(s, Number(el.dataset.job), Number(el.dataset.id)));
+  } else if (act === 'mission-skim') {
+    run(CA.toggleSkim(s, Number(el.dataset.id)));
   } else if (act === 'heist-pick') {
     run(HE.toggleHeistMember(s, Number(el.dataset.id)));
   } else if (act === 'exp-pick') {

@@ -6,6 +6,7 @@ import { resolveTrialEffect } from './dossier';
 import { resolvePressureEffect } from './pressure';
 import { resolveBondEffect } from './bonds';
 import { hunter, hunterProgress, resolveHunterEffect } from './hunters';
+import { resolveCareerEffect } from './career';
 import { activeMembers, chance, clamp, district, log, neighbors, news, nextId, owned, pick, rival, stockTotal, storageCap } from './state';
 import type { GameState, PendingEvent, Shop } from './types';
 
@@ -363,7 +364,7 @@ export function resolveEvent(s: GameState, effect: string) {
   const respect = (n: number) => (s.respect = clamp(s.respect + n, 0, 150));
   const allLoyalty = (n: number) => activeMembers(s).forEach((m) => (m.loyalty = clamp(m.loyalty + n, 0, 100)));
 
-  if (resolveTrialEffect(s, effect) || resolvePressureEffect(s, effect, ev) || resolveFamilyEffect(s, effect, ev) || resolveBondEffect(s, effect, ev) || resolveHunterEffect(s, effect, ev)) {
+  if (resolveTrialEffect(s, effect) || resolvePressureEffect(s, effect, ev) || resolveFamilyEffect(s, effect, ev) || resolveBondEffect(s, effect, ev) || resolveHunterEffect(s, effect, ev) || resolveCareerEffect(s, effect, ev)) {
     s.pendingEvent = null;
     checkEnd(s);
     return;

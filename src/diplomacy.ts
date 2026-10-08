@@ -137,7 +137,7 @@ export function makePeace(s: GameState, id: string): Result {
 
 export function relationsTick(s: GameState) {
   for (const r of s.rivals) {
-    if (!r.alive) continue;
+    if (!r.alive || r.employer) continue;
     if (r.talkCooldown > 0) r.talkCooldown--;
     if (r.war) r.relation = Math.min(r.relation, -60);
     else if (r.relation > 0) r.relation -= 1;

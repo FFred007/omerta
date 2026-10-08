@@ -70,7 +70,7 @@ export function makeShop(s: GameState, used: Set<string>): Shop {
   return { id: nextId(s), owner, trade: pick(SHOP_TRADES), satisfaction: randInt(45, 65) };
 }
 
-function makeMember(s: GameState, partial: Partial<Member>): Member {
+export function makeMember(s: GameState, partial: Partial<Member>): Member {
   return {
     id: nextId(s),
     ...randomIdentity(s),
@@ -227,7 +227,7 @@ export function award(s: GameState, m: Member, amount: number, stat: JobStat) {
       m.xp -= donXpForNext(m.level);
       m.level += 1;
       m.points = (m.points ?? 0) + 1;
-      log(s, 'good', `Le Don passe niveau ${m.level} : 1 point à placer (onglet Le Don).`);
+      log(s, 'good', s.career && s.career.rank !== 'don' ? `Tu passes niveau ${m.level} : 1 point à placer (onglet Toi).` : `Le Don passe niveau ${m.level} : 1 point à placer (onglet Le Don).`);
     }
     return;
   }

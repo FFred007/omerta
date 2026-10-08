@@ -21,6 +21,7 @@ import { cityName, cityOf, cityDistricts, donCity, holder, isOpen, memberCity, r
 import { breachTruce, commissionTick, truceActive } from './commission';
 import { CITIES } from './data';
 import { finalize } from './score';
+import { CREW_MAX, careerRank, careerTick, generateMissions, inCareer, rankAtLeast } from './career';
 import { bondsTick, onDeath, onPromote, shareOp } from './bonds';
 import { bizHeat, bizName, buildBlocker, owns, resale, respectFromBuildings } from './buildings';
 import { onKilled, vendettasTick } from './vendetta';
@@ -90,6 +91,7 @@ export function hire(s: GameState, recruitId: number): ActionResult {
   const r = s.recruits.find((x) => x.id === recruitId);
   if (!r) return fail('Recrue introuvable.');
   const cost = recruitCost(s, r);
+  if (inCareer(s) && s.members.filter((m) => !m.isDon && !m.isChild).length >= CREW_MAX[careerRank(s)]) return fail(`À ton rang, tu ne peux pas avoir plus de ${CREW_MAX[careerRank(s)]} hommes.`);
   if (s.dirty + s.clean < cost) return fail("Pas assez d'argent.");
   const fromDirty = Math.min(s.dirty, cost);
   s.dirty -= fromDirty;
@@ -273,25 +275,26 @@ export function endTurn(s: GameState): LogEntry[] {
   const conquered = new Set<string>();
   resolvePlayerAttacks(s, conquered);
   resolveJobs(s);
-  heistTick(s);
+  careerTick(s);
+  if (!inCareer(s)) heistTick(s);
   economy(s);
   resolveShipments(s);
   resolveRaids(s, raidedDistricts);
   marketTick(s);
   rivalsTurn(s, conquered);
   relationsTick(s);
-  commissionTick(s);
+  if (!inCareer(s)) commissionTick(s);
   shopsTick(s);
   crewTurn(s, raidedDistricts);
   bondsTick(s);
   vendettasTick(s);
   familyTick(s);
   networkTick(s);
-  huntersTick(s);
+  if (rankAtLeast(s, 'capo')) huntersTick(s);
   dossierTick(s);
   heatWarnings(s);
-  pressureTick(s);
-  objectivesTick(s);
+  if (rankAtLeast(s, 'capo')) pressureTick(s);
+  if (!inCareer(s)) objectivesTick(s);
   checkEnd(s);
   publishHerald(s);
   const explained = knownLines.reduce((a, l) => a + l.value, 0);
@@ -306,6 +309,7 @@ export function endTurn(s: GameState): LogEntry[] {
   s.lowProfile = false;
   s.week += 1;
   generateJobs(s);
+  generateMissions(s);
 
   // nouvelles recrues chaque semaine
   s.recruits = [];
@@ -443,6 +447,7 @@ export interface Settlement {
   launderCap: number;
   bribes: number;
   bribesOk: boolean;
+  tribute: number;
   dirtyNet: number;
   cleanNet: number;
 }
@@ -465,6 +470,11 @@ export function settle(s: GameState): Settlement {
   clean -= salClean;
   due -= salClean;
 
+  // le capo reverse sa part au Don
+  const tributeDue = careerRank(s) === 'capo' ? Math.round(p.dirtyIn * (s.career?.kickup ?? 0.3)) : 0;
+  const tribute = Math.min(dirty, tributeDue);
+  dirty -= tribute;
+
   const cap = Math.round(p.launderCap * (s.launderRate ?? 1));
   const launderTaken = Math.min(dirty, cap);
   const launderGiven = Math.round(launderTaken * (1 - launderFee(s)));
@@ -476,7 +486,7 @@ export function settle(s: GameState): Settlement {
 
   return {
     dirtyIn: p.dirtyIn, cleanIn: p.cleanIn, salaries: p.salaries, salDirty, salClean, unpaid: due,
-    launderTaken, launderGiven, launderCap: cap, bribes: p.bribes, bribesOk,
+    launderTaken, launderGiven, launderCap: cap, bribes: p.bribes, bribesOk, tribute,
     dirtyNet: dirty - s.dirty, cleanNet: clean - s.clean,
   };
 }
@@ -604,6 +614,7 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter((d) => {
       if (d.owner === r.id || conquered.has(d.id)) return false;
       if (d.gate && d.owner === 'neutral' && !isOpen(s, cityOf(d))) return false; // la gare attend la famille du joueur
+      if (rival(s, d.owner)?.employer && owned(s, d.owner).length <= 1) return false; // la famille du joueur ne disparaît pas pendant l'ascension
       if (d.owner === 'player') return !r.alliance && r.truceWeeks === 0 && !spareFriend;
       return true;
     });
@@ -739,6 +750,7 @@ function heatWarnings(s: GameState) {
 export function checkEnd(s: GameState) {
   if (s.status !== 'playing') return;
   const n = owned(s).length;
+  if (inCareer(s)) return; // pendant l'ascension, la partie ne s'arrête que si le joueur tombe
   if (n === 0) {
     finalize(s, 'ruine', 'Ta famille a été rayée de la carte. Plus un seul quartier ne te paie.');
   } else if (activeMembers(s).length === 0 && s.members.length === 0 && s.dirty + s.clean < 300) {

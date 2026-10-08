@@ -630,3 +630,20 @@ select {
 
 .build-group { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ivory-dim); margin: 12px 0 6px; font-weight: 700; }
 .build .tag { float: right; font-size: 10.5px; padding: 0 5px; margin-left: 4px; }
+
+/* ---------- v1.0 : l'ascension ---------- */
+.modal.wide-modal { max-width: 720px; }
+.setup-names { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0; position: relative; z-index: 1; }
+.setup-names label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ivory-dim); }
+.origins { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; position: relative; z-index: 1; }
+.origin { text-align: left; padding: 8px 10px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.18); color: var(--ivory); border-radius: var(--r-sm); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.origin b { font-size: 14px; }
+.origin small { font-size: 11.5px; color: var(--ivory-dim); }
+.origin small.trait { color: var(--brass); border: none; padding: 0; background: none; }
+.origin.on { border-color: var(--brass); background: rgba(196, 160, 82, 0.14); }
+.promo { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.14); }
+.checklist { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }
+.checklist li::before { content: '○ '; color: var(--ivory-dim); }
+.checklist li.done { color: var(--clean); }
+.checklist li.done::before { content: '● '; color: var(--good); }
+@media (max-width: 520px) { .setup-names { grid-template-columns: 1fr; } }

@@ -176,7 +176,9 @@ export function generateJobs(s: GameState) {
     const t = pool.filter((x) => !used.has(x.key)).find((x) => (roll_ -= x.weight) <= 0)!;
     used.add(t.key);
     const r = t.needsRival ? pick(rivals) : undefined;
-    jobs.push({ id: nextId(s), key: t.key, team: [], city, ...t.make(s, scale, r) });
+    const made = t.make(s, scale, r);
+    if (s.career && s.career.rank !== 'don' && made.minMen > s.members.filter((m) => m.status === 'actif').length) continue;
+    jobs.push({ id: nextId(s), key: t.key, team: [], city, ...made });
   }
   // les vendettas en cours : un coup de vengeance par tueur, dans sa ville
   for (const v of activeVendettas(s).slice(0, 2)) jobs.push(vendettaJob(s, v));

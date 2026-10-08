@@ -28,6 +28,7 @@ npx vite-node tests/cities.ts        # villes, gouverneurs, Commission, fin choi
 npx vite-node tests/v08.ts           # liens, vendettas, traqueurs, grands coups (chance affichée = réelle)
 npx vite-node tests/mapgen.ts        # 1 000 cartes générées : jouables et toutes différentes
 npx vite-node tests/buildings.ts     # bâtiments, améliorations, emplacements, prévisions exactes
+npx vite-node tests/career.ts 200    # l'ascension jouée par un bot : rythme des promotions, succession, suite en Don
 npx vite-node tests/sim.ts 300 --retire=50   # le bot prend sa retraite à la semaine 50
 ```
 
@@ -36,6 +37,10 @@ Options du bot : `--onecity` (reste à New Corrano), `--nocomm` (n'achète aucun
 Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérives, pas à mesurer la difficulté pour un humain. Repère v0.7 : un bot qui ignore la heat et le réseau finit surtout condamné ; s'il prend sa retraite à la semaine 30, il réussit dans 40 % des parties (score moyen ~2 200), à la semaine 50 dans 20 % (~4 200).
 
 ## Règles
+
+- **Deux façons de jouer.** *L'ascension* (par défaut) : tu crées ton personnage (prénom, nom, origine parmi gamin des rues, fils de boucher, ex-boxeur, petit comptable, fils de docker, chacune avec ses stats et un trait) et tu commences associé de la Famille Moretti. *Partie rapide* : tu commences directement Don, avec tout le jeu débloqué.
+- **L'ascension.** Associé → homme d'honneur (le baptême) → capo → Don, en 25 à 30 semaines environ. Chaque rang demande la confiance du Don, des missions réussies à ce rang et un nombre minimum de semaines. Chaque semaine, ton capo (puis le Don) te confie 2 ou 3 missions ; tu en mènes 2 au plus. Chacune teste une stat (Poigne, Ombre, Verbe, Flair) avec une chance exacte ; tes hommes t'accompagnent sur la force et la discrétion (moitié de leur stat). Se servir dans la caisse rapporte 60 % de plus, mais l'Ombre décide si tu es découvert. Refuser une mission coûte 1 de confiance. Homme d'honneur : 2 hommes sous tes ordres. Capo : le Don te confie Little Sicily, et tu lui verses 20, 30 ou 40 % des revenus. Dilemmes : un ami d'enfance à corriger, un flic qui veut faire de toi un indic, une veuve qui ne peut plus payer, un capo rival qui te piège, un service pour le consigliere. Mariage et enfants dès le début ; épouser la fille du Don ouvre toutes les portes.
+- **La succession.** Le Don vieillit. Quand il meurt, le consigliere, les capos et les anciens votent : chacun te soutient si son affinité pour toi dépasse ce qui le lie au favori (affiché dans l'onglet Relations). Cadeaux, services, mariage et Verbe font monter l'affinité. Gagné : tu deviens Don, tu hérites du territoire, des hommes et du siège à la Commission, et la famille prend ton nom. Perdu : le favori prend le trône et tu restes capo, en attendant la prochaine occasion.
 
 - **Le temps passe.** Une horloge fait défiler les jours (×1, ×2, ×3, pause, barre d'espace). Les ordres de la semaine se jouent la nuit de dimanche, avec des effets sur la carte (camions, fusillades, descentes, conquêtes) et un fil de la ville en direct. Les décisions (événements du jeudi et du dimanche) mettent le jeu en pause. « Aller à dimanche soir » résout la semaine tout de suite.
 - **Alcool.** Les speakeasies vendent jusqu'à 18 caisses par semaine de ton stock (whisky, puis gin, puis bière), à un prix qui dépend de la clientèle du quartier. Sans stock, ils ne rapportent que l'entrée. Achat par le lac (−40 % sur le prix du marché, livré la nuit, risque d'interception réduit par l'escorte) ou au grossiste (immédiat, sûr, plus cher). Revente en gros pour profiter des pénuries. Les prix bougent chaque semaine avec des chocs (pénurie à Chicago, canicule…). La distillerie produit du gin, l'entrepôt ajoute du stockage.
@@ -94,6 +99,7 @@ src/
   heist.ts      grands coups en trois semaines
   mapgen.ts     carte générée
   buildings.ts  effets des bâtiments, améliorations, emplacements
+  career.ts     l'ascension : origines, missions, confiance, relations, succession
   pressure.ts   coalition, capos ambitieux, tentatives d'assassinat
   objectives.ts contrats à moyen terme
   fx.ts         effets visuels : camions, fusillades, compteurs, une du journal

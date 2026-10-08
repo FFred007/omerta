@@ -271,6 +271,8 @@ export interface RivalFamily {
   surname?: string;
   /** mise au ban par la Commission : les autres familles la chassent */
   bannedWeeks?: number;
+  /** la famille qui emploie le joueur pendant l'ascension */
+  employer?: boolean;
 }
 
 export interface AttackOrder {
@@ -361,6 +363,8 @@ export interface GameState {
   heistCooldown?: number;
   /** carte tirée au hasard (nouvelles parties depuis la v0.8) */
   generatedMap?: boolean;
+  /** l'ascension : de simple associé à Don (absent = partie commencée en tant que Don) */
+  career?: Career;
   /** jour de la semaine en cours (0 = lundi … 6 = dimanche) */
   day?: number;
   speed?: number;
@@ -488,4 +492,56 @@ export interface Heist {
   reward: { dirty?: number; clean?: number; respect?: number; crates?: { good: Good; qty: number } };
   rivalId?: string;
   log: string[];
+}
+
+export type CareerRank = 'associe' | 'soldat' | 'capo' | 'don';
+export type MissionStat = 'force' | 'discretion' | 'verbe' | 'flair';
+export interface Mission {
+  id: number;
+  key: string;
+  title: string;
+  text: string;
+  giver: string; // qui donne l'ordre
+  stat: MissionStat;
+  difficulty: number;
+  reward: { dirty: number; trust: number; respect?: number };
+  failTrust: number;
+  failHeat: number;
+  danger: number; // 0..1 : blessure ou prison si ça rate
+  accepted: boolean;
+  crew: number[]; // hommes du joueur qui l'accompagnent (force et discrétion seulement)
+  skim: boolean; // se servir dans la caisse
+  rivalId?: string;
+}
+/** Un personnage de la famille : le Don, le consigliere, les capos, les anciens */
+export interface Notable {
+  id: string;
+  role: 'don' | 'consigliere' | 'capo' | 'ancien';
+  name: string;
+  nickname: string;
+  seed: number;
+  age: number;
+  affinity: number; // -100..100 envers le joueur
+  /** pour les votants : affinité qu'il a pour le favori (le joueur doit faire mieux) */
+  rivalPull?: number;
+  favori?: boolean;
+  traits?: string[];
+  lastGift?: number;
+}
+export interface Career {
+  rank: CareerRank;
+  origin: string;
+  employer: string; // id de la famille dans s.rivals
+  trust: number; // confiance du Don 0..100
+  missionsDone: number;
+  missionsTotal: number; // réussies depuis le début
+  rankWeek: number;
+  missions: Mission[];
+  kickup: number; // part reversée au Don par le capo (0,2 · 0,3 · 0,4)
+  notables: Notable[];
+  donHealth: number;
+  dying?: boolean;
+  lost?: string; // nom du capo qui a pris la place du Don à la place du joueur
+  path?: 'succession' | 'coup' | 'trahison';
+  history: { week: number; text: string }[];
 }
