@@ -794,7 +794,7 @@ function vendettaBlock() {
       <b>${esc(v.killer)} « ${esc(v.nickname)} »</b> <span class="muted">· tueur de ${r ? `<span style="color:${r.color}">${esc(r.name)}</span>` : 'la pègre'} · ${esc(CT.cityName(v.city))} · force ${v.force}</span>
       <small>A tué ${esc(v.victims.join(', '))}. <span class="${left <= 3 ? 'danger' : ''}">Encore ${left} semaine${left > 1 ? 's' : ''} pour le venger</span>, sinon −4 respect et ses vengeurs perdent 15 de loyauté (certains partent).${avengers.length ? ` Vengeurs (+2 chacun sur le coup) : ${esc(avengers.map((m) => m.nickname).join(', '))}.` : ''}</small>
     </div></div>`;
-  }).join('')}`;
+  }).join('')}<p class="note">Pour venger : descends jusqu'au coup « Vendetta : abattre … » (bordure rouge) dans la liste ci-dessous, et coche au moins 2 hommes présents dans la ville du tueur. Il se joue dimanche soir.</p>`;
 }
 
 function heistBlock() {
