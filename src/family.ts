@@ -1,4 +1,5 @@
 // La famille du Don : rencontres, mariage, grossesse, enfants, héritier, succession.
+import { startVote } from './circle';
 import { DON_START_AGE, YEAR_WEEKS, ageOf, donHasTalent, donOf } from './don';
 import { activeMembers, chance, clamp, log, news, nextId, pick, randInt, rival } from './state';
 import type { TraitId } from './traits';
@@ -298,7 +299,9 @@ export function familyTick(s: GameState) {
       const m = s.members.find((x) => x.id === heir.memberId);
       if (m) {
         m.talents = [...new Set([...(m.talents ?? []), ...(heir.inheritTalents ?? [])])];
-        crown(s, m, 'fin de la régence');
+        const regent = s.members.find((x) => x.id === reg.regentId && x.rank === 'capo');
+        if (s.circle) startVote(s, m, 'fin de la régence', regent);
+        else crown(s, m, 'fin de la régence');
       }
       s.regency = null;
     } else if (reg.regentId) {
@@ -315,7 +318,7 @@ export function familyTick(s: GameState) {
 
 // ---------- Succession ----------
 /** Le nouveau Don prend la tête de la famille */
-function crown(s: GameState, m: Member, why: string) {
+export function crown(s: GameState, m: Member, why: string) {
   const prev = (s.dynasty ?? [])[(s.dynasty ?? []).length - 1];
   m.isDon = true;
   m.isChild = false;
@@ -347,17 +350,11 @@ export function succession(s: GameState, don: Member, cause: string) {
     finalize(s, /condamn/.test(cause) ? 'prison' : 'mort', `${don.name} ${cause}. Sans héritier, la lignée s'éteint et la famille se disperse.`);
     return;
   }
-  // la famille vacille
-  s.respect = Math.round(s.respect * 0.85);
-  s.members.filter((m) => !m.isChild).forEach((m) => (m.loyalty = clamp(m.loyalty - 10, 0, 100)));
-  s.rivals.forEach((r) => (r.relation = clamp(r.relation - 10, -100, 100)));
-  s.spouse = null; // la veuve se retire
-  s.courtship = null;
-
   const heirMember = heir.memberId ? s.members.find((x) => x.id === heir.memberId) : undefined;
   if (heirMember) {
     heirMember.talents = [...new Set([...(heirMember.talents ?? []), ...inherited])];
-    crown(s, heirMember, 'succession');
+    if (s.circle) startVote(s, heirMember, 'succession');
+    else crown(s, heirMember, 'succession');
   } else {
     const regent = [...s.members].filter((m) => m.rank === 'capo' && !m.isChild).sort((a, b) => (b.level ?? 0) - (a.level ?? 0) || b.loyalty - a.loyalty)[0]
       ?? [...s.members].sort((a, b) => (b.level ?? 0) - (a.level ?? 0))[0];
@@ -365,6 +362,12 @@ export function succession(s: GameState, don: Member, cause: string) {
     heir.inheritTalents = inherited;
     log(s, 'neutral', `${heir.name} n'a que ${Math.floor(childAge(s, heir))} ans. ${s.regency.regentName} assure la régence jusqu'à ses ${ADULT_AGE} ans.`);
   }
+  // la famille vacille (après le vote du cercle, qui s'est joué sur les loyautés d'avant le deuil)
+  s.respect = Math.round(s.respect * 0.85);
+  s.members.filter((m) => !m.isChild && !m.isDon).forEach((m) => (m.loyalty = clamp(m.loyalty - 10, 0, 100)));
+  s.rivals.forEach((r) => (r.relation = clamp(r.relation - 10, -100, 100)));
+  s.spouse = null; // la veuve se retire
+  s.courtship = null;
 }
 
 export function resolveFamilyEffect(s: GameState, effect: string, ev: PendingEvent): boolean {

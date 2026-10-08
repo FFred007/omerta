@@ -10,6 +10,7 @@ import {
 import { has, type TraitId } from './traits';
 import { cityOf } from './cities';
 import { killMember } from './engine';
+import { circleFromCareer } from './circle';
 import type { Career, CareerRank, GameState, Member, Mission, MissionStat, Notable, PendingEvent } from './types';
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -56,7 +57,7 @@ export const favori = (s: GameState) => s.career?.notables.find((n) => n.favori)
 
 // ---------- Création ----------
 const NOTABLE_NICKS = ['le Sage', 'la Fouine', 'Doigts d’Or', 'le Taureau', 'l’Évêque', 'Bouche Cousue', 'le Dentiste', 'Belles Manières', 'le Gros', 'la Belette', 'Quatre-Saisons', 'le Pharmacien'];
-function makeNotable(role: Notable['role'], id: string, age: number, used: Set<string>, affinity: number): Notable {
+export function makeNotable(role: Notable['role'], id: string, age: number, used: Set<string>, affinity: number): Notable {
   let name = '';
   const lasts = new Set([...used].map((n) => n.split(' ').slice(1).join(' ')));
   for (let i = 0; i < 40 && (!name || used.has(name) || lasts.has(name.split(' ').slice(1).join(' '))); i++) name = `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`;
@@ -718,14 +719,19 @@ export function becomeDon(s: GameState, path: 'succession' | 'coup' | 'trahison'
       salary: r.salary, assignment: all[i % all.length]?.id ?? null, traits: r.traits, level: r.level ?? 0,
     }));
   }
-  // les capos qui t'ont soutenu te rejoignent ; le favori part
-  const joinAt = path === 'succession' ? 0 : 30;
-  for (const n of c.notables.filter((x) => x.role === 'capo' && !x.favori && x.affinity > joinAt)) {
+  // les capos restent : ceux qui t'ont soutenu sont fidèles, les autres gardent rancune.
+  // Après une succession, le favori battu reste aussi, et ronge son frein.
+  for (const n of c.notables.filter((x) => x.role === 'capo' && x.id !== 'mentor' && (!x.favori || path === 'succession'))) {
+    const forMe = !n.favori && n.affinity > (n.rivalPull ?? 25);
+    if (path !== 'succession' && n.affinity < -20) continue; // ils ne te pardonnent pas le sang du Don
     s.members.push(makeMember(s, {
-      name: n.name, nickname: n.nickname, rank: 'capo', force: randInt(6, 8), discretion: randInt(5, 7), loyalty: clamp(50 + Math.round(n.affinity / 2), 40, 90),
-      salary: 450, assignment: all[randInt(0, all.length - 1)]?.id ?? null, level: 3, traits: ['fidele'], seed: n.seed,
+      name: n.name, nickname: n.nickname, rank: 'capo', force: randInt(6, 8), discretion: randInt(5, 7),
+      loyalty: n.favori ? 25 : forMe ? clamp(50 + Math.round(n.affinity / 2), 45, 90) : clamp(30 + Math.round(n.affinity / 4), 20, 40),
+      salary: 450, assignment: all[randInt(0, all.length - 1)]?.id ?? null, level: n.favori ? 4 : 3, traits: forMe ? ['fidele'] : [], seed: n.seed,
+      grudge: !forMe,
     }));
   }
+  circleFromCareer(s, path);
   if (emp) { emp.alive = false; emp.employer = false; }
   // la dette envers une famille rivale : un quartier hérité lui revient
   if (path === 'trahison' && c.debtTo) {

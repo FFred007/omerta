@@ -183,6 +183,9 @@ export interface Member {
   seed?: number;
   /** ville où se trouve l'homme (absent = New Corrano) */
   city?: string;
+  /** capo qui a voté contre toi à la succession */
+  grudge?: boolean;
+  lastGift?: number;
 }
 
 export interface Spouse {
@@ -336,6 +339,11 @@ export interface GameState {
   pendingCandidate?: Courtship | null;
   children?: Child[];
   heirId?: number | null;
+  /** le cercle du Don : consigliere et anciens (les capos votent aussi) */
+  circle?: Notable[];
+  /** poids de l'héritier auprès du cercle, gagné en le présentant (0..40) */
+  heirFavor?: number;
+  lastPresent?: number;
   regency?: Regency | null;
   generation?: number;
   dynasty?: PastDon[];
@@ -529,6 +537,8 @@ export interface Notable {
   /** pour les votants : affinité qu'il a pour le favori (le joueur doit faire mieux) */
   rivalPull?: number;
   favori?: boolean;
+  /** a voté contre toi : garde rancune */
+  grudge?: boolean;
   traits?: string[];
   lastGift?: number;
 }

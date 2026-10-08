@@ -1,4 +1,5 @@
 import { BUSINESSES, COUNCIL_BRIBE, DIRTY_STASH_LIMIT, JUDGE_BRIBE, PROMOTE_COST } from './data';
+import { circleTick, initCircle } from './circle';
 import { rollEvent } from './events';
 import { marketTick, resolveShipments } from './booze';
 import { publishHerald, relationsTick } from './diplomacy';
@@ -248,6 +249,7 @@ export function heatForecast(s: GameState) {
 
 export function startGame(familyName?: string, classic = false) {
   const s = newGame(familyName, classic);
+  initCircle(s);
   generateJobs(s);
   fillObjectives(s);
   return s;
@@ -301,6 +303,7 @@ export function endTurn(s: GameState): LogEntry[] {
   bondsTick(s);
   vendettasTick(s);
   familyTick(s);
+  if (!inCareer(s)) { initCircle(s); circleTick(s); }
   networkTick(s);
   if (rankAtLeast(s, 'capo')) huntersTick(s);
   dossierTick(s);

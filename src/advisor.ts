@@ -1,6 +1,9 @@
 // Le consigliere : chaque lundi, les trois choses qui pressent le plus, et le bilan de la semaine passée.
 import * as CA from './career';
 import * as CT from './cities';
+import * as CI from './circle';
+import { childAge } from './family';
+import { ageOf } from './don';
 import * as HU from './hunters';
 import { acquittalChance, dossierForecast } from './dossier';
 import { settle } from './engine';
@@ -23,14 +26,16 @@ export function advisor(s: GameState): { name: string; title: string; seed: numb
     const who = c.rank === 'associe' || c.rank === 'soldat' ? CA.notable(s, 'mentor') : CA.notable(s, 'consigliere');
     if (who) return { name: `${who.name} « ${who.nickname} »`, title: who.id === 'mentor' ? 'ton capo' : 'le consigliere', seed: who.seed, age: who.age + Math.floor((s.week - 1) / 6) };
   }
+  const cons = CI.consigliere(s);
+  if (cons) return { name: `${cons.name} « ${cons.nickname} »`, title: 'le consigliere', seed: cons.seed, age: CI.notableAge(s, cons) };
   return { name: 'Tommaso Ferri « l’Avvocato »', title: 'le consigliere', seed: 7741, age: 61 };
 }
 
 /** Onglets que le joueur voit à son rang */
 function visible(s: GameState, tab: string) {
-  if (!CA.inCareer(s)) return tab !== 'missions' && tab !== 'relations';
+  if (!CA.inCareer(s)) return tab !== 'missions' && (tab !== 'relations' || !!s.circle);
   const r = CA.careerRank(s);
-  if (tab === 'villes' || tab === 'commission') return false;
+  if (tab === 'villes' || tab === 'commission' || tab === 'cercle') return false;
   if (tab === 'famille') return r !== 'associe';
   if (tab === 'business' || tab === 'rivaux') return r === 'capo';
   return true;
@@ -79,12 +84,24 @@ export function advice(s: GameState): Advice[] {
   }
 
   // les hommes
-  const shaky = activeMembers(s).filter((m) => !m.isDon && m.loyalty < 30);
+  const shaky = activeMembers(s).filter((m) => !m.isDon && m.loyalty < 30 && !(m.grudge && CI.loyalAdvisor(s)));
   if (shaky.length) add(60, 'warn', `${shaky.length === 1 ? `${shaky[0].name} « ${shaky[0].nickname} » n'est plus sûr` : `${shaky.length} hommes ne sont plus sûrs`} (loyauté sous 30). Augmente-les ou écarte-les.`, 'famille', career ? 'L’équipe' : 'La famille');
   const don = donOf(s);
   if (don?.points) add(28, 'info', `${career ? 'Tu as' : 'Le Don a'} ${don.points} point${don.points > 1 ? 's' : ''} à dépenser.`, 'don', career ? 'Toi' : 'Le Don');
   if (s.spouse && s.spouse.affection < 30) add(34, 'info', `${s.spouse.name} se sent délaissée (affection ${s.spouse.affection}).`, 'don', career ? 'Toi' : 'Le Don');
   if (s.heist && s.heist.stage === 0) add(24, 'info', `Un grand coup se présente : « ${s.heist.title} ».`, 'coups', 'Les coups');
+
+  // le cercle et l'héritier
+  if (!career && s.circle && don) {
+    const t = CI.heirTally(s);
+    const age = Math.floor(ageOf(s, don));
+    const risky = age >= 58 || don.status !== 'actif' || !!s.trial || (s.dossier ?? 0) >= 70;
+    if (!t.heir && (age >= 50 || risky)) add(risky ? 62 : 30, risky ? 'warn' : 'info', `Pas d'héritier : si le Don tombe, la famille se disperse. ${s.spouse ? 'Il est temps d’agrandir la famille.' : 'Il est temps de se marier.'}`, 'don', 'Le Don');
+    else if (t.heir && !t.wins && t.pretender) add(risky ? 78 : 36, risky ? 'danger' : 'info', `Si le Don tombait aujourd'hui, ${t.pretender.name} « ${t.pretender.nickname} » l'emporterait sur ${t.heir.name} (${t.yes} voix sur ${t.voters.length}, il en faut ${t.needed}). Présente l'héritier au cercle.`, 'relations', 'Le cercle');
+    const sore = s.members.filter((m) => m.grudge && m.rank === 'capo' && !m.isDon && m.loyalty < 40);
+    if (sore.length && CI.loyalAdvisor(s)) add(64, 'warn', `${sore[0].name} « ${sore[0].nickname} » n'a pas digéré ${s.career ? 'ton arrivée sur le trône' : 'le dernier vote'} (loyauté ${sore[0].loyalty}). Un cadeau, ou qu'il disparaisse.`, 'relations', 'Le cercle');
+    if (t.heir && !CI.heirMember(s, t.heir) && childAge(s, t.heir) >= 12 && !CI.presentBlocker(s) && (s.heirFavor ?? 0) < 16) add(26, 'info', `${t.heir.name} a l'âge d'être présenté${t.heir.sex === 'f' ? 'e' : ''} aux anciens.`, 'relations', 'Le cercle');
+  }
 
   // la carrière
   if (c && career) {

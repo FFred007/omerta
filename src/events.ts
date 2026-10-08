@@ -7,6 +7,7 @@ import { resolvePressureEffect } from './pressure';
 import { resolveBondEffect } from './bonds';
 import { hunter, hunterProgress, resolveHunterEffect } from './hunters';
 import { resolveCareerEffect } from './career';
+import { resolveCircleEffect } from './circle';
 import { activeMembers, chance, clamp, district, log, neighbors, news, nextId, owned, pick, rival, stockTotal, storageCap } from './state';
 import type { GameState, PendingEvent, Shop } from './types';
 
@@ -364,8 +365,8 @@ export function resolveEvent(s: GameState, effect: string) {
   const respect = (n: number) => (s.respect = clamp(s.respect + n, 0, 150));
   const allLoyalty = (n: number) => activeMembers(s).forEach((m) => (m.loyalty = clamp(m.loyalty + n, 0, 100)));
 
-  if (resolveTrialEffect(s, effect) || resolvePressureEffect(s, effect, ev) || resolveFamilyEffect(s, effect, ev) || resolveBondEffect(s, effect, ev) || resolveHunterEffect(s, effect, ev) || resolveCareerEffect(s, effect, ev)) {
-    s.pendingEvent = null;
+  if (resolveTrialEffect(s, effect) || resolvePressureEffect(s, effect, ev) || resolveFamilyEffect(s, effect, ev) || resolveBondEffect(s, effect, ev) || resolveHunterEffect(s, effect, ev) || resolveCareerEffect(s, effect, ev) || resolveCircleEffect(s, effect, ev)) {
+    if (s.pendingEvent === ev) s.pendingEvent = null; // un effet peut ouvrir une autre décision (le vote du cercle)
     checkEnd(s);
     return;
   }
@@ -517,6 +518,6 @@ export function resolveEvent(s: GameState, effect: string) {
     case 'n_accept': s.clean += 2000; heat(5); log(s, 'money', 'Le banquier investit 2 000 $ propres.'); break;
     case 'n_refuse': respect(2); break;
   }
-  s.pendingEvent = null;
+  if (s.pendingEvent === ev) s.pendingEvent = null;
   checkEnd(s);
 }

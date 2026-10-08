@@ -12,6 +12,7 @@ import { activeVendettas } from './vendetta';
 import * as BL from './buildings';
 import * as CA from './career';
 import * as AD from './advisor';
+import * as CI from './circle';
 import { SLOT_MAX, UPGRADES } from './data';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
@@ -67,6 +68,7 @@ const SPEEDS = [1, 2, 3];
 const DAY_MS = 2600; // durée d'un jour à vitesse ×1
 
 let s: GameState = load() ?? E.startGame();
+if (!CA.inCareer(s) && s.status === 'playing') CI.initCircle(s);
 if (s.week === 1 && s.log.length <= 1) { ui.showIntro = true; ui.newGame = true; }
 ui.city = CT.donCity(s);
 if (CT.cityOf(district(s, ui.selected)) !== ui.city) ui.selected = CT.ownedIn(s, ui.city)[0]?.id ?? ui.selected;
@@ -533,7 +535,7 @@ function tabs() {
   const items0: [Tab, string, string][] = [
     ['quartier', 'Quartier', ''],
     ['missions', 'Missions', career ? String(s.career!.missions.length) : ''],
-    ['relations', 'Relations', career && s.career!.dying ? '!' : ''],
+    ['relations', career ? 'Relations' : 'Cercle', career ? (s.career!.dying ? '!' : '') : s.circle && donOf(s) && !CI.heirTally(s).wins ? '!' : ''],
     ['don', career ? 'Toi' : s.regency ? 'Régence' : donOf(s)?.sex === 'f' ? 'La Donna' : 'Le Don', donOf(s)?.points ? `+${donOf(s)!.points}` : s.spouse?.pregnantWeeks ? '♥' : ''],
     ['business', 'Alcool', salesPlan(s).shortage ? '!' : ''],
     ['coups', 'Coups', `${s.jobs.length}${s.heist ? '+1' : ''}${activeVendettas(s).length ? ' !' : ''}`],
@@ -544,7 +546,7 @@ function tabs() {
     ['rivaux', 'Rivaux', s.rivals.some((r) => r.war) ? 'guerre' : ''],
     ['journal', 'Journal', ''],
   ];
-  const hide = new Set<Tab>(career ? ['villes', 'commission'] : ['missions', 'relations']);
+  const hide = new Set<Tab>(career ? ['villes', 'commission'] : s.circle ? ['missions'] : ['missions', 'relations']);
   if (career && r === 'associe') hide.add('famille');
   if (career && (r === 'associe' || r === 'soldat')) { hide.add('business'); hide.add('rivaux'); }
   const items = items0.filter(([id]) => !hide.has(id)).map(([id, l, c]): [Tab, string, string] => [id, career && id === 'coups' ? 'Combines' : career && id === 'famille' ? 'Équipe' : l, c]);
@@ -1323,9 +1325,62 @@ function missionsPanel() {
 }
 const theDonAge = () => (CA.theDon(s)?.age ?? 66) + Math.floor((s.week - 1) / 6);
 
+function circlePanel() {
+  const t = CI.heirTally(s);
+  const don = donOf(s);
+  const roleName: Record<string, string> = { consigliere: 'consigliere', ancien: 'ancien', capo: 'capo' };
+  const giftBtn = (act: string, id: string | number, last?: number) => {
+    const why = CI.giftBlocker(s, last);
+    return `<button class="btn small" data-act="${act}" data-id="${id}" ${why ? `disabled title="${esc(why)}"` : ''}>Un cadeau · ${money(CI.GIFT_COST)}</button>`;
+  };
+  const voteTxt = (v: CI.Voter) => !t.heir ? '' : v.yes
+    ? `<span class="clean">votera pour ${esc(t.heir.name)}</span> <span class="muted">(${v.forHeir} contre ${v.pull})</span>`
+    : `<span class="danger">votera pour ${esc(t.pretender?.nickname ?? 'le prétendant')}</span> <span class="muted">(${v.forHeir} pour l'héritier, il en faut ${v.pull + 1})</span>`;
+  const notables = CI.circle(s).map((n) => {
+    const v = t.voters.find((x) => x.notable === n);
+    return `<div class="person">${portrait({ seed: n.seed, size: 52, age: CI.notableAge(s, n), sex: 'm', rank: n.role === 'consigliere' ? 'capo' : 'soldat' })}<div class="grow">
+      <b>${esc(n.name)}</b> <span class="muted">« ${esc(n.nickname)} » · ${roleName[n.role] ?? n.role} · ${CI.notableAge(s, n)} ans${n.grudge ? ' · <span class="danger">rancunier</span>' : ''}</span>
+      <div class="aff">Affinité ${n.affinity} ${relationMeterValue(n.affinity)}</div>
+      ${n.role === 'consigliere' ? `<div><small>${CI.loyalAdvisor(s) ? 'Fidèle : il apaise les rancunes et te prévient quand on complote contre toi.' : 'Pas encore acquis : à 40 d’affinité, il apaisera les rancunes et te préviendra des complots.'}</small></div>` : ''}
+      ${v ? `<div><small>${voteTxt(v)}</small></div>` : ''}
+      <div class="diplo">${giftBtn('ci-gift', n.id, n.lastGift)}</div>
+    </div></div>`;
+  }).join('');
+  const capos = s.members.filter((m) => m.rank === 'capo' && !m.isDon && !m.isChild).map((m) => {
+    const v = t.voters.find((x) => x.member === m);
+    const pre = t.pretender?.id === m.id;
+    return `<div class="person">${memberPortrait(m, 52)}<div class="grow">
+      <b>${esc(m.name)}</b> <span class="muted">« ${esc(m.nickname)} » · capo niv. ${m.level ?? 0}${m.grudge ? ' · <span class="danger">rancunier</span>' : ''}</span>
+      <div class="aff">Loyauté ${m.loyalty}</div>
+      <small>${pre ? `<span class="danger">le prétendant : c'est lui qui disputerait la place${t.heir ? ` à ${esc(t.heir.name)}` : ''}</span>` : v ? voteTxt(v) : ''}</small>
+      <div class="diplo">${giftBtn('ci-gift-capo', m.id, m.lastGift)}</div>
+    </div></div>`;
+  }).join('');
+  const why = CI.presentBlocker(s);
+  const heirLine = !t.heir
+    ? `<p class="note danger">Pas d'héritier. Si le Don tombe, la lignée s'éteint.</p>`
+    : `<div class="facts">
+        <span>Héritier <b>${esc(t.heir.name)}</b></span>
+        <span>Poids auprès du cercle <b>+${CI.heirBonus(s, t.heir)}</b></span>
+        <span>Prétendant <b>${t.pretender ? esc(t.pretender.nickname) : 'aucun'}</b></span>
+        <span>Si le Don tombait aujourd'hui <b class="${t.wins ? 'clean' : 'danger'}">${t.pretender ? `${t.yes}/${t.voters.length} voix (il en faut ${t.needed})` : 'élu sans vote'}</b></span>
+      </div>
+      <p class="note">Le poids de l'héritier s'ajoute à ce que chacun pense du Don (affinité ou loyauté divisée par deux) : présentations au cercle (+${CI.PRESENT_GAIN}, jusqu'à ${CI.FAVOR_MAX}), son niveau (+3 par niveau une fois dans les affaires) et son éducation (+3 par étape). En face, il faut battre 25 chez un capo, 45 chez un rancunier, et l'attachement propre de chaque ancien. Perdu, il reste une chance de prendre le trône par la force.</p>
+      <div class="diplo"><button class="btn" data-act="ci-present" ${why ? `disabled title="${esc(why)}"` : ''}>Présenter ${esc(t.heir.name)} au cercle · ${money(CI.PRESENT_COST)}</button>${why ? `<small class="muted">${esc(why)}</small>` : ''}</div>`;
+  return `
+    <h3>Le cercle</h3>
+    <p class="flavor">Le consigliere, les anciens et les capos. Ils ne servent pas seulement : quand ${don ? 'le Don' : 'la famille'} tombe${don ? '' : 'ra'}, ils votent pour l'héritier ou pour le capo le plus ambitieux. Ceux qui ont voté contre restent, et gardent rancune.</p>
+    <h4>La succession</h4>
+    ${heirLine}
+    <h4>Le consigliere et les anciens</h4>
+    ${notables || '<p class="note">Personne.</p>'}
+    <h4>Les capos</h4>
+    ${capos || '<p class="note">Aucun capo : sans prétendant, l\'héritier sera élu sans vote.</p>'}`;
+}
+
 function relationsPanel() {
   const c = s.career;
-  if (!c) return '';
+  if (!c || c.rank === 'don') return circlePanel();
   const t = CA.successionTally(s);
   const roleName: Record<string, string> = { don: 'le Don', consigliere: 'consigliere', capo: 'capo', ancien: 'ancien' };
   const cost = CA.giftCost(s);
@@ -1878,6 +1933,9 @@ app.addEventListener('click', (ev) => {
     case 'setup-origin': readSetup(); ui.setup.origin = id; return render();
     case 'setup-map': readSetup(); ui.setup.classic = id === 'classic'; return render();
     case 'gift': return run(CA.gift(s, id));
+    case 'ci-gift': return run(CI.giftNotable(s, id));
+    case 'ci-gift-capo': return run(CI.giftCapo(s, Number(id)));
+    case 'ci-present': return run(CI.presentHeir(s));
     case 'plot': {
       const key = id === 'rival' ? `plot-rival-${el.dataset.to}` : `plot-${id}`;
       if (!confirmed(key)) return;

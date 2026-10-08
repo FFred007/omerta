@@ -36,7 +36,12 @@ assert(!!kid.memberId && s.members.some((m) => m.id === kid.memberId), `entre da
 if (!donOf(s)) console.log('   dynastie :', JSON.stringify(s.dynasty), 'régence', JSON.stringify(s.regency));
 const don = donOf(s)!;
 don.talents = ['b_reputation', 'b_silence', 'p_respect', 'p_parole'];
+// un cercle acquis : le vote ne fait pas de doute
+s.members.forEach((m) => (m.loyalty = 100));
+s.circle?.forEach((n) => (n.affinity = 90));
 E.killMember(s, don);
+const vote = s.pendingEvent as import('../src/types').PendingEvent | null;
+if (vote?.key === 'ci_vote') { console.log('   ' + vote.text); resolveEvent(s, vote.choices[0].effect); }
 const nd = donOf(s);
 assert(nd && nd.id === kid.memberId, `succession : ${nd?.name} devient le Don`);
 assert(nd!.talents!.length >= 2, `talents hérités : ${nd!.talents!.join(', ')}`);
@@ -52,6 +57,9 @@ E.killMember(r, donOf(r)!);
 assert(!!r.regency && !donOf(r), `régence ouverte (régent : ${r.regency?.regentName})`);
 const regent = r.members.find((m) => m.id === r.regency?.regentId);
 if (regent) regent.loyalty = 100;
+r.members.forEach((m) => (m.loyalty = 100));
+r.circle?.forEach((n) => (n.affinity = 90));
+r.heirFavor = 40;
 run(r, 80);
 assert(!!donOf(r) && donOf(r)!.childId === 9999, `fin de régence : ${donOf(r)?.name} prend la tête à ${Math.floor(ageOf(r, donOf(r)!))} ans`);
 
