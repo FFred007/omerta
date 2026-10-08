@@ -1239,7 +1239,7 @@ function contactRow(c: NET.ContactDef) {
       ${c.retainer ? (st.active
         ? `<button class="btn small" data-act="net-dismiss" data-id="${c.id}">Arrêter de payer</button>`
         : `<button class="btn small" data-act="net-hire" data-id="${c.id}" ${why ? 'disabled' : ''}>Le mettre dans ta poche · ${money(price)}/sem.</button>`) : ''}
-      ${c.action ? `<button class="btn small" data-act="net-use" data-id="${c.id}" ${useWhy ? 'disabled' : ''} title="${esc(useWhy ?? c.action.desc)}">${esc(c.action.label)} · ${money(c.action.cost)}</button><span class="muted need">${esc(c.action.desc)}${useWhy && st.active ? ` · ${esc(useWhy)}` : ''}</span>` : ''}
+      ${c.action ? `<button class="btn small" data-act="net-use" data-id="${c.id}" ${useWhy ? 'disabled' : ''} title="${esc(useWhy ?? c.action.desc)}">${esc(c.action.label)} · ${money(c.action.cost)}</button><span class="muted need">${esc(c.action.desc)}${useWhy && useWhy !== why ? ` · <span class="danger">${esc(useWhy)}</span>` : ''}</span>` : ''}
     </div>
   </div></div>`;
 }
