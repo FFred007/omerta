@@ -1,4 +1,5 @@
 // Le dossier fédéral et le procès du Don.
+import { politicsDossierLines } from './endgame';
 import { DON_SEEN_HEAT, donHasTalent, donOf } from './don';
 import { succession } from './family';
 import { isActive, networkDossier } from './network';
@@ -40,6 +41,7 @@ export function dossierForecast(s: GameState) {
   if (cap) lines.push({ label: `Tes amis de Washburn (${cap} quartier${cap > 1 ? 's' : ''})`, value: -cap });
   const net = networkDossier(s);
   if (net) lines.push({ label: 'Ton réseau dans la justice', value: net });
+  lines.push(...politicsDossierLines(s));
   return lines.map((l) => ({ ...l, value: halve(s, l.value) }));
 }
 

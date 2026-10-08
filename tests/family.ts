@@ -31,7 +31,7 @@ const kid = s.children![0];
 run(s, 40);
 assert(kid.education.length >= 1, `éducation choisie (${kid.education.join(', ')}) à ${Math.floor(F.childAge(s, kid))} ans`);
 run(s, 70);
-console.log('   statut :', s.status, s.endReason);
+console.log('   statut :', s.status, s.endReason, JSON.stringify(s.dynasty ?? []));
 assert(!!kid.memberId && s.members.some((m) => m.id === kid.memberId), `entre dans la famille à ${Math.floor(F.childAge(s, kid))} ans`);
 if (!donOf(s)) console.log('   dynastie :', JSON.stringify(s.dynasty), 'régence', JSON.stringify(s.regency));
 const don = donOf(s)!;

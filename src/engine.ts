@@ -1,4 +1,5 @@
 import { BUSINESSES, COUNCIL_BRIBE, DIRTY_STASH_LIMIT, JUDGE_BRIBE, PROMOTE_COST } from './data';
+import { brigadeActive, dropSenator, endgameTick, politicsHeatLines, politicsRaids } from './endgame';
 import { circleTick, initCircle } from './circle';
 import { rollEvent } from './events';
 import { marketTick, resolveShipments } from './booze';
@@ -222,6 +223,7 @@ export function heatForecast(s: GameState) {
   if (lines.length && rounded !== raw) lines[lines.length - 1].value += rounded - raw;
   if (spouseHas(s, 'pieuse')) lines.push({ label: 'Ta femme, pieuse, rassure le curé', value: -1, sure: true });
   for (const c of activeContacts(s)) if (c.heat) lines.push({ label: `${c.name} (${c.role})`, value: c.heat, sure: true });
+  for (const l of politicsHeatLines(s)) lines.push({ ...l, sure: true });
   const chatter = familyCount(s, 'bavard');
   if (chatter) lines.push({ label: `Bavard${chatter > 1 ? 's' : ''} dans la famille`, value: chatter, sure: true });
   lines.push({ label: 'Retombée naturelle', value: -HEAT_DECAY, sure: true });
@@ -309,6 +311,7 @@ export function endTurn(s: GameState): LogEntry[] {
   dossierTick(s);
   heatWarnings(s);
   if (rankAtLeast(s, 'capo')) pressureTick(s);
+  if (!inCareer(s)) endgameTick(s);
   if (!inCareer(s)) objectivesTick(s);
   informantTick(s);
   checkEnd(s);
@@ -412,7 +415,7 @@ function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
   }
 }
 
-function casualties(s: GameState, men: Member[], pInjured: number, pKilled: number, byRival?: string) {
+export function casualties(s: GameState, men: Member[], pInjured: number, pKilled: number, byRival?: string) {
   for (const m of men) {
     if (!s.members.includes(m)) continue;
     // ses hommes protègent le Don : il risque moins que les autres
@@ -542,6 +545,7 @@ function economy(s: GameState) {
     s.judge = false;
     s.councilman = false;
     for (const c of activeContacts(s)) contactState(s, c.id).active = false;
+    dropSenator(s, 'Le sénateur Whitcombe n’a pas reçu son enveloppe : il ne te connaît plus.');
     s.heat = clamp(s.heat + 8, 0, 100);
     log(s, 'police', "Pas assez d'argent propre pour les enveloppes : flics, juge et élus te lâchent (+8 heat).");
   }
@@ -567,8 +571,8 @@ function resolveRaids(s: GameState, raided: Set<string>) {
   for (const d of owned(s)) {
     const illegal = d.businesses.filter((b) => BUSINESSES[b.kind].illegal);
     if (!illegal.length) continue;
-    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d)) * (donHasTalent(s, 'r_ombre') ? 0.8 : 1) * networkRaids(s) * hunterRaidMult(s);
-    if (d.bribedCop) p *= 0.3;
+    let p = Math.pow(s.heat / 100, 1.6) * 0.18 * d.police * raidMood(satisfaction(d)) * (donHasTalent(s, 'r_ombre') ? 0.8 : 1) * networkRaids(s) * hunterRaidMult(s) * politicsRaids(s);
+    if (d.bribedCop) p *= brigadeActive(s) ? 0.6 : 0.3;
     if (s.lowProfile) p *= 0.3;
     if (!chance(p)) continue;
 

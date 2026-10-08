@@ -2,6 +2,7 @@ import {
   BASE_STORAGE, BUSINESSES, DISTRICT_SEEDS, FIRST_NAMES, GOOD_ORDER, GOODS, LAST_NAMES, NICKNAMES,
   RIVAL_SEEDS, SHOP_NAMES, SHOP_TRADES, TARIFFS, TRIPOT_WHISKY,
 } from './data';
+import { politicsHeat, senatorRetainer } from './endgame';
 import type { District, GameState, Good, Member, Owner, Recruit, LogTone, Shop } from './types';
 import { TRAITS, donHas, donStartTraits, familyCount, familyHas, gainXp, has, rankTitle, rollRecruitTraits } from './traits';
 import type { JobStat } from './types';
@@ -435,10 +436,10 @@ export function projection(s: GameState) {
   dirtyIn = racket + fixed + booze;
   if (s.councilman) launderCap = Math.round(launderCap * 1.25);
   launderCap = Math.round(launderCap * (1 + 0.1 * familyCount(s, 'comptable') + (spouseHas(s, 'affaires') ? 0.1 : 0)));
-  heatGain += familyCount(s, 'bavard') - (spouseHas(s, 'pieuse') ? 1 : 0) + networkHeat(s);
+  heatGain += familyCount(s, 'bavard') - (spouseHas(s, 'pieuse') ? 1 : 0) + networkHeat(s) + politicsHeat(s);
   if (spouseHas(s, 'fortune')) cleanIn += 300;
   const salaries = activeMembers(s).reduce((t, m) => t + m.salary, 0) + s.members.filter((m) => m.status !== 'actif').reduce((t, m) => t + Math.round(m.salary / 2), 0);
   const bribes =
-    owned(s).filter((d) => d.bribedCop).length * 300 + (s.judge ? 800 : 0) + (s.councilman ? 1200 : 0) + networkRetainers(s);
+    owned(s).filter((d) => d.bribedCop).length * 300 + (s.judge ? 800 : 0) + (s.councilman ? 1200 : 0) + networkRetainers(s) + senatorRetainer(s);
   return { dirtyIn, racket, fixed, booze, cleanIn, launderCap, heatGain: Math.round(heatGain), salaries, bribes, plan };
 }

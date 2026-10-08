@@ -13,6 +13,7 @@ import * as BL from './buildings';
 import * as CA from './career';
 import * as AD from './advisor';
 import * as CI from './circle';
+import * as EG from './endgame';
 import { SLOT_MAX, UPGRADES } from './data';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
@@ -327,7 +328,7 @@ function advisorCard() {
       ${b!.gained.length || b!.lost.length ? `<p class="bilan-d">${b!.gained.length ? `<span class="clean">Pris : ${b!.gained.map(esc).join(', ')}</span>` : ''}${b!.gained.length && b!.lost.length ? ' · ' : ''}${b!.lost.length ? `<span class="danger">Perdu : ${b!.lost.map(esc).join(', ')}</span>` : ''}</p>` : ''}
     </div>` : '';
   const list = items.length
-    ? `<ol class="adv-list">${items.map((x) => `<li><button class="adv-item ${x.tone}" data-act="tab" data-id="${x.tab}"><span class="adv-dot" aria-hidden="true"></span><span class="adv-text">${esc(x.text)}</span><span class="adv-link">${esc(x.link)} →</span></button></li>`).join('')}</ol>`
+    ? `<ol class="adv-list">${items.map((x) => `<li><button class="adv-item ${x.tone}" data-act="${x.select ? 'select' : 'tab'}" data-id="${x.select ?? x.tab}"><span class="adv-dot" aria-hidden="true"></span><span class="adv-text">${esc(x.text)}</span><span class="adv-link">${esc(x.link)} →</span></button></li>`).join('')}</ol>`
     : `<p class="note">Rien ne presse cette semaine. C'est le moment de construire, de recruter ou de préparer un coup.</p>`;
   return `
   <div class="advisor ${ui.advisorOpen ? '' : 'closed'}">
@@ -384,6 +385,8 @@ function mapView() {
   <div class="map-wrap">
     ${inCoalition(s) ? `<div class="banner danger-banner">Les familles sont coalisées contre toi encore ${s.coalitionWeeks} semaine${(s.coalitionWeeks ?? 0) > 1 ? 's' : ''} : elles attaquent 60 % plus souvent et te visent en priorité.</div>` : ''}
     ${s.trial ? `<div class="banner danger-banner">Procès fédéral en cours : étape ${Math.min(4, s.trial.stage + 1)} sur 4 · ${Math.round(acquittalChance(s) * 100)} % d'acquittement pour l'instant.</div>` : ''}
+    ${s.expedition ? `<div class="banner danger-banner">${esc(rival(s, s.expedition.rivalId)?.name ?? 'Une famille')} débarque à ${esc(district(s, s.expedition.target).name)} ${s.expedition.arrive - s.week <= 0 ? 'dimanche soir' : `dans ${s.expedition.arrive - s.week + 1} semaines`} : force ${s.expedition.force}, tu tiens à ${pct(EG.expeditionHold(s))}. <button class="linkish" data-act="tab" data-id="rivaux">Se préparer</button></div>` : ''}
+    ${EG.brigadeActive(s) ? `<div class="banner danger-banner">La brigade spéciale de l’${EG.brigadeLeader} est en ville encore ${s.brigade!.weeks} semaine${s.brigade!.weeks > 1 ? 's' : ''} : descentes ×${String(EG.BRIGADE_RAIDS).replace('.', ',')}, flics payés à moitié efficaces, +${EG.BRIGADE_DOSSIER} dossier par semaine.</div>` : ''}
     ${CM.truceActive(s) ? `<div class="banner">Trêve générale de la Commission : encore ${s.commission!.truceWeeks} semaine${s.commission!.truceWeeks > 1 ? 's' : ''}. Un assaut te coûterait la face.</div>` : ''}
     ${cityTabs()}
     <div class="map-title"><h2>${esc(cityDef(ui.city).name)}</h2><span class="muted" style="font-size:13px">${busy ? esc(busy) + ' · ' : ''}${cityStatus(ui.city)}</span></div>
@@ -1483,6 +1486,7 @@ function corruptionPanel() {
   return `
     <h3>Le réseau</h3>
     <p class="flavor">Des gens, pas des boutons. Ils se paient en argent propre chaque semaine, deviennent gourmands, peuvent être démasqués (heat et dossier qui explosent) ou rachetés par un rival qui te déteste. Le Verbe du Don fait baisser leurs tarifs.</p>
+    ${politicsBlock()}
     ${huntersBlock()}
     <h4>Le dossier fédéral (${Math.round(s.dossier ?? 0)}/100)</h4>
     ${dossierBlock()}
@@ -1538,11 +1542,43 @@ function relationMeter(r: RivalFamily) {
     <i style="left:${left}%;width:${width}%;background:${tone}"></i><b></b></div>`;
 }
 
+function expeditionBlock() {
+  const e = s.expedition;
+  if (!e) return CA.inCareer(s) ? '' : `<p class="note">${EG.expeditionOpen(s) ? 'Ta famille compte : les familles des autres villes peuvent désormais tenter une expédition chez toi, annoncée deux semaines à l’avance.' : 'Tant que ta famille reste modeste (moins de 3 quartiers, ou moins de 7 quartiers et de 35 de respect), les familles des autres villes ne viendront pas te chercher.'}</p>`;
+  const r = rival(s, e.rivalId);
+  const d = district(s, e.target);
+  const cost = EG.payoffCost(s);
+  return `<div class="job danger-banner"><div class="job-head"><b>Expédition de ${esc(r?.name ?? '?')}</b><span class="tag">${e.arrive - s.week <= 0 ? 'dimanche soir' : `dans ${e.arrive - s.week + 1} semaines`}</span></div>
+    <p class="note">Ils viennent de ${esc(CT.cityName(r?.city))} et visent ${esc(d.name)}. Force ${e.force} contre ta défense de ${defenseOf(s, d)} : tu tiens à <b>${pct(EG.expeditionHold(s))}</b> aujourd'hui. Poste des hommes dans le quartier pour monter la défense. Repoussés : +6 respect. Perdu : le quartier, −6 respect et des blessés.</p>
+    <div class="diplo"><button class="btn small" data-act="select" data-id="${d.id}">Voir ${esc(d.name)}</button><button class="btn small" data-act="eg-payoff" ${s.dirty < cost ? 'disabled' : ''}>Les payer pour qu'ils restent chez eux · ${money(cost)} sale · −3 respect</button></div></div>`;
+}
+
+function politicsBlock() {
+  if (CA.inCareer(s)) return '';
+  const e = EG.election(s);
+  const sen = EG.senatorBlocker(s);
+  const gala = EG.galaBlocker(s);
+  const mayor = e.mayor === 'ami' ? `${EG.MAYOR_FRIEND}, ton homme (descentes −15 %, −1 heat/sem.)` : e.mayor === 'reformateur' ? `<span class="danger">${EG.MAYOR_REFORM}, la réformatrice (descentes +25 %, +1 heat/sem.)</span>` : `${EG.MAYOR_FRIEND}, sortant`;
+  return `<h4>La politique</h4>
+    <div class="paths">
+      <article class="job"><div class="job-head"><b>Élections municipales</b><span class="tag">dans ${Math.max(0, e.next - s.week) + 1} sem.</span></div>
+        <p class="note">Maire : ${mayor}. Face à lui, ${EG.MAYOR_REFORM} promet de nettoyer la ville. Chances de ${EG.MAYOR_FRIEND} : <b>${pct(EG.electionChance(s))}</b> (financement, ta mensualité au maire, ton sénateur ; la heat au-delà de 40 les fait baisser).</p>
+        <div class="diplo"><button class="btn small" data-act="eg-fund" ${s.clean < EG.FUND_STEP || e.funds >= EG.FUND_MAX ? 'disabled' : ''}>Financer la campagne · ${money(EG.FUND_STEP)} propre</button><small class="muted">Versé : ${money(e.funds)} / ${money(EG.FUND_MAX)}</small></div></article>
+      <article class="job"><div class="job-head"><b>Un sénateur</b><span class="tag">${s.senator ? 'acheté' : 'Washburn'}</span></div>
+        <p class="note">${s.senator ? `Le sénateur Whitcombe est à toi depuis la semaine ${s.senator.since} : ${EG.SENATOR_DOSSIER} dossier par semaine, plus de brigade fédérale, +15 points aux élections. ${money(EG.SENATOR_RETAINER)} propres par semaine dans les enveloppes ; 1 % de scandale chaque semaine (+12 dossier, +10 heat).` : `Le sénateur Whitcombe : ${money(EG.SENATOR_COST)} propres, puis ${money(EG.SENATOR_RETAINER)} par semaine. Le dossier baisse de ${-EG.SENATOR_DOSSIER} par semaine, Washburn rappelle sa brigade, et ton candidat gagne 15 points aux élections.`}</p>
+        ${s.senator ? '' : `<div class="diplo"><button class="btn small" data-act="eg-senator" ${sen ? `disabled title="${esc(sen)}"` : ''}>Acheter le sénateur · ${money(EG.SENATOR_COST)}</button>${sen ? `<small class="muted">${esc(sen)}</small>` : ''}</div>`}</article>
+      <article class="job"><div class="job-head"><b>Gala de charité</b><span class="tag">${s.gala?.count ? `${s.gala.count} donné${s.gala.count > 1 ? 's' : ''}` : 'aucun'}</span></div>
+        <p class="note">Une aile d’hôpital, une école, un orgue pour la cathédrale : +5 respect, −8 heat, −3 dossier. Chaque gala coûte plus cher que le précédent.</p>
+        <div class="diplo"><button class="btn small" data-act="eg-gala" ${gala ? `disabled title="${esc(gala)}"` : ''}>Donner un gala · ${money(EG.galaCost(s))} propre</button>${gala ? `<small class="muted">${esc(gala)}</small>` : ''}</div></article>
+    </div>`;
+}
+
 function rivalsPanel() {
   const max = Math.max(30, ...s.rivals.map((r) => r.strength));
   const myForce = D.playerForce(s);
   return `
     <h3>Les familles</h3>
+    ${expeditionBlock()}
     <p class="flavor">Ta force de frappe : <b>${myForce}</b>. Une relation haute les dissuade de t'attaquer ; une guerre double leur agressivité.</p>
     ${CITIES.map((c) => `<h4>${esc(c.name)}</h4>` + CT.rivalsIn(s, c.id).filter((r) => r.alive || r.id !== CA.EMPLOYER_ID).map((r) => {
       const terr = owned(s, r.id).map((d) => d.name).join(', ');
@@ -1936,6 +1972,10 @@ app.addEventListener('click', (ev) => {
     case 'ci-gift': return run(CI.giftNotable(s, id));
     case 'ci-gift-capo': return run(CI.giftCapo(s, Number(id)));
     case 'ci-present': return run(CI.presentHeir(s));
+    case 'eg-payoff': return run(EG.payOffExpedition(s));
+    case 'eg-fund': return run(EG.fundCampaign(s));
+    case 'eg-senator': return run(EG.buySenator(s));
+    case 'eg-gala': return run(EG.holdGala(s));
     case 'plot': {
       const key = id === 'rival' ? `plot-rival-${el.dataset.to}` : `plot-${id}`;
       if (!confirmed(key)) return;

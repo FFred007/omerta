@@ -71,6 +71,8 @@ export interface District {
   bribedCop: boolean;
   /** semaines de pacification après une conquête */
   unrest?: number;
+  /** semaines d'affilée où les commerçants sont à bout (révolte à 3) */
+  grievance?: number;
   flavor: string;
   shops: Shop[];
   tariff: Tariff;
@@ -343,6 +345,16 @@ export interface GameState {
   circle?: Notable[];
   /** poids de l'héritier auprès du cercle, gagné en le présentant (0..40) */
   heirFavor?: number;
+  /** une famille d'une autre ville débarque */
+  expedition?: { rivalId: string; target: string; force: number; arrive: number } | null;
+  expeditionCd?: number;
+  /** brigade fédérale spéciale : incorruptible, pour quelques semaines */
+  brigade?: { weeks: number } | null;
+  brigadeCd?: number;
+  /** élections municipales de New Corrano */
+  election?: { next: number; funds: number; mayor: 'ami' | 'reformateur' | null };
+  senator?: { since: number } | null;
+  gala?: { count: number; last?: number };
   lastPresent?: number;
   regency?: Regency | null;
   generation?: number;

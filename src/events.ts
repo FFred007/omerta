@@ -1,4 +1,5 @@
 import { checkEnd } from './engine';
+import { resolveEndgameEffect } from './endgame';
 import { declareWar, playerForce } from './diplomacy';
 import { donOf } from './don';
 import { ORIGINS, SPOUSE_TRAITS, makeCandidate, resolveFamilyEffect, startCourtship, type SpouseOrigin } from './family';
@@ -365,7 +366,7 @@ export function resolveEvent(s: GameState, effect: string) {
   const respect = (n: number) => (s.respect = clamp(s.respect + n, 0, 150));
   const allLoyalty = (n: number) => activeMembers(s).forEach((m) => (m.loyalty = clamp(m.loyalty + n, 0, 100)));
 
-  if (resolveTrialEffect(s, effect) || resolvePressureEffect(s, effect, ev) || resolveFamilyEffect(s, effect, ev) || resolveBondEffect(s, effect, ev) || resolveHunterEffect(s, effect, ev) || resolveCareerEffect(s, effect, ev) || resolveCircleEffect(s, effect, ev)) {
+  if (resolveTrialEffect(s, effect) || resolvePressureEffect(s, effect, ev) || resolveFamilyEffect(s, effect, ev) || resolveBondEffect(s, effect, ev) || resolveHunterEffect(s, effect, ev) || resolveCareerEffect(s, effect, ev) || resolveCircleEffect(s, effect, ev) || resolveEndgameEffect(s, effect, ev)) {
     if (s.pendingEvent === ev) s.pendingEvent = null; // un effet peut ouvrir une autre décision (le vote du cercle)
     checkEnd(s);
     return;

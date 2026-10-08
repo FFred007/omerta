@@ -2,19 +2,20 @@
 import * as CA from './career';
 import * as CT from './cities';
 import * as CI from './circle';
+import * as EG from './endgame';
 import { childAge } from './family';
 import { ageOf } from './don';
 import * as HU from './hunters';
 import { acquittalChance, dossierForecast } from './dossier';
 import { settle } from './engine';
 import { inCoalition } from './pressure';
-import { activeMembers, district, salesPlan } from './state';
+import { activeMembers, district, owned, salesPlan } from './state';
 import { activeVendettas } from './vendetta';
 import { donOf } from './don';
 import type { GameState, Snapshot } from './types';
 
 export type AdviceTone = 'danger' | 'warn' | 'info';
-export interface Advice { tone: AdviceTone; text: string; tab: string; link: string; prio: number }
+export interface Advice { tone: AdviceTone; text: string; tab: string; link: string; prio: number; select?: string }
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString('fr-FR')}`;
 const pct = (x: number) => `${Math.round(x * 100)} %`;
@@ -81,6 +82,20 @@ export function advice(s: GameState): Advice[] {
   }
   if (!career) for (const city of CT.openCities(s)) {
     if (!CT.holder(s, city.id)) add(74, 'warn', `Personne ne tient ${city.name} : ses revenus baissent de 30 %. Nomme un gouverneur.`, 'villes', 'Les villes');
+  }
+
+  // les menaces de fin de partie
+  if (!career) {
+    if (s.expedition) {
+      const hold = EG.expeditionHold(s);
+      const r = s.rivals.find((x) => x.id === s.expedition!.rivalId);
+      add(hold < 0.6 ? 89 : 52, hold < 0.6 ? 'danger' : 'warn', `${r?.name ?? 'Une famille'} débarque à ${district(s, s.expedition.target)?.name} ${s.expedition.arrive <= s.week ? 'dimanche soir' : `dans ${s.expedition.arrive - s.week + 1} semaines`} : tu tiens à ${pct(hold)}. Poste des hommes, ou paie-les.`, 'rivaux', 'Les rivaux');
+    }
+    if (EG.brigadeActive(s) && !s.senator) add(68, 'warn', `La brigade de l’${EG.brigadeLeader} est là encore ${s.brigade!.weeks} semaines. Fais profil bas${EG.senatorBlocker(s) ? '' : ', ou achète le sénateur pour la faire rappeler'}.`, 'corruption', 'Le réseau');
+    const el = EG.election(s);
+    if (el.next - s.week <= 1) add(44, 'info', `Élections municipales ${el.next === s.week ? 'dimanche' : 'la semaine prochaine'} : ${EG.MAYOR_FRIEND} a ${pct(EG.electionChance(s))} de chances. Un chèque de campagne aiderait.`, 'corruption', 'Le réseau');
+    const sore = owned(s).filter((d) => (d.grievance ?? 0) >= EG.REVOLT_AT - 1);
+    if (sore.length) { add(63, 'warn', `Les commerçants de ${sore[0].name} sont à bout depuis ${sore[0].grievance} semaines. Une de plus et ils se soulèvent : baisse le tarif.`, 'quartier', sore[0].name); out[out.length - 1].select = sore[0].id; }
   }
 
   // les hommes
