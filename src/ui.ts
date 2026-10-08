@@ -2,7 +2,7 @@ import { BUSINESSES, COP_BRIBE, COUNCIL_BRIBE, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE
 import * as E from './engine';
 import { resolveEvent } from './events';
 import {
-  activeMembers, attackPower, businessIncome, clamp, clearSave, committedToAttack, defenseOf, district, isAttackable, load, membersIn,
+  activeMembers, attackPower, businessIncome, winChance, clamp, clearSave, committedToAttack, defenseOf, district, isAttackable, load, membersIn,
   newGame, owned, projection, rival, save,
 } from './state';
 import type { BusinessKind, District, GameState, Member, Owner } from './types';
@@ -47,13 +47,6 @@ const SHORT: Record<BusinessKind, string> = {
   blanchisserie: 'Lavoir', restaurant: 'Resto', garage: 'Garage',
 };
 
-function winChance(power: number, def: number) {
-  if (power <= 0) return 0;
-  let wins = 0;
-  const n = 600;
-  for (let i = 0; i < n; i++) if (power * (0.75 + Math.random() * 0.5) > def * (0.75 + Math.random() * 0.5)) wins++;
-  return wins / n;
-}
 
 // =====================================================================
 // Rendu
@@ -289,7 +282,7 @@ function attackPanel(d: District) {
     <div class="odds" style="--odds:${tone}">
       Puissance <b class="num">${power}</b> contre défense <b class="num">${def}</b> ·
       <b style="color:${tone}">${verdict}${ids.length ? ` (${Math.round(p * 100)} %)` : ''}</b>
-      <div class="note">Les hommes engagés ne défendent pas leur quartier cette semaine. En cas de victoire, ceux de la réserve tiennent le nouveau quartier, les autres rentrent à leur poste. Un assaut fait monter la heat de ${5 + d.police * 2}.</div>
+      <div class="note">Chaque camp tire un multiplicateur entre ×0,75 et ×1,25 ; le pourcentage est exact. Un quartier conquis ne peut pas être repris par un rival la même nuit. Les hommes engagés ne défendent pas leur quartier cette semaine. En cas de victoire, ceux de la réserve tiennent le nouveau quartier, les autres rentrent à leur poste. Un assaut fait monter la heat de ${5 + d.police * 2}.</div>
     </div>
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
       <button class="btn primary" data-act="attack" data-id="${d.id}" ${ids.length ? '' : 'disabled'}>${order ? "Modifier l'assaut" : "Ordonner l'assaut"}</button>

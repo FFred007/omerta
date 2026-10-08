@@ -173,6 +173,25 @@ export function attackPower(s: GameState, memberIds: number[]): number {
   return Math.round(base + s.respect / 20);
 }
 
+/** Aléa des combats : chaque camp tire un multiplicateur uniforme dans [0,75 ; 1,25] */
+export const ROLL_MIN = 0.75;
+export const ROLL_SPAN = 0.5;
+export const roll = () => ROLL_MIN + Math.random() * ROLL_SPAN;
+
+/** Probabilité exacte que power × U > def × V (U, V uniformes et indépendants) */
+export function winChance(power: number, def: number): number {
+  if (power <= 0) return 0;
+  if (def <= 0) return 1;
+  const k = power / def;
+  const steps = 2000;
+  let acc = 0;
+  for (let i = 0; i < steps; i++) {
+    const u = ROLL_MIN + ((i + 0.5) / steps) * ROLL_SPAN;
+    acc += clamp((k * u - ROLL_MIN) / ROLL_SPAN, 0, 1);
+  }
+  return acc / steps;
+}
+
 export function hasDistillery(s: GameState) {
   return owned(s).some((d) => d.businesses.some((b) => b.kind === 'distillerie'));
 }

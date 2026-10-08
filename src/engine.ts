@@ -1,7 +1,7 @@
 import { BUSINESSES, COUNCIL_BRIBE, DIRTY_STASH_LIMIT, JUDGE_BRIBE, LAUNDER_FEE, PROMOTE_COST } from './data';
 import { rollEvent } from './events';
 import {
-  activeMembers, attackPower, chance, clamp, committedToAttack, defenseOf, district, isAttackable, log,
+  activeMembers, attackPower, chance, roll, winChance, clamp, committedToAttack, defenseOf, district, isAttackable, log,
   makeRecruit, membersIn, neighbors, nextId, owned, pick, projection, rand, randInt, rival,
 } from './state';
 import type { BusinessKind, District, GameState, LogEntry, Member, RivalFamily } from './types';
@@ -159,10 +159,11 @@ export function endTurn(s: GameState): LogEntry[] {
   const week = s.week;
   const raidedDistricts = new Set<string>();
 
-  resolvePlayerAttacks(s);
+  const conquered = new Set<string>();
+  resolvePlayerAttacks(s, conquered);
   economy(s);
   resolveRaids(s, raidedDistricts);
-  rivalsTurn(s);
+  rivalsTurn(s, conquered);
   crewTurn(s, raidedDistricts);
   donArrestCheck(s);
   checkEnd(s);
@@ -181,7 +182,7 @@ export function endTurn(s: GameState): LogEntry[] {
 }
 
 // ---------- Combats du joueur ----------
-function resolvePlayerAttacks(s: GameState) {
+function resolvePlayerAttacks(s: GameState, conquered: Set<string>) {
   for (const order of s.orders) {
     const d = district(s, order.districtId);
     if (d.owner === 'player') continue;
@@ -189,8 +190,10 @@ function resolvePlayerAttacks(s: GameState) {
     if (!men.length) continue;
     const powerBase = attackPower(s, men.map((m) => m.id));
     const defBase = defenseOf(s, d);
-    const power = powerBase * (0.75 + rand() * 0.5);
-    const def = defBase * (0.75 + rand() * 0.5);
+    const power = powerBase * roll();
+    const def = defBase * roll();
+    const odds = Math.round(winChance(powerBase, defBase) * 100);
+    const dice = `(${odds} % de chances · puissance ${powerBase} → ${power.toFixed(1)} contre défense ${defBase} → ${def.toFixed(1)})`;
     const ratio = clamp(defBase / Math.max(1, powerBase), 0.2, 2);
     const prevOwner = d.owner;
     const r = prevOwner !== 'neutral' ? rival(s, prevOwner) : undefined;
@@ -210,14 +213,15 @@ function resolvePlayerAttacks(s: GameState) {
       const holders = men.filter((m) => !m.assignment);
       men.forEach((m) => (m.loyalty = clamp(m.loyalty + 4, 0, 100)));
       holders.forEach((m) => (m.assignment = d.id));
-      log(s, 'good', `Victoire ! Tes hommes prennent ${target}.${holders.length ? '' : " Personne n'y est resté en garde."}`);
+      conquered.add(d.id);
+      log(s, 'good', `Victoire ! Tes hommes prennent ${target} ${dice}.${holders.length ? '' : " Personne n'y est resté en garde."}`);
       casualties(s, men, 0.2 * ratio, 0.06 * ratio);
     } else {
       s.stats.battlesLost++;
       s.respect = clamp(s.respect - 3, 0, 150);
       if (r) r.strength = Math.max(3, r.strength - 1);
       else d.garrison += 1;
-      log(s, 'bad', `L'assaut sur ${target} tourne mal. Tes hommes se replient.`);
+      log(s, 'bad', `L'assaut sur ${target} tourne mal ${dice}. Tes hommes se replient.`);
       casualties(s, men, 0.35 * ratio, 0.12 * ratio);
     }
   }
@@ -330,7 +334,8 @@ function resolveRaids(s: GameState, raided: Set<string>) {
 }
 
 // ---------- IA des familles rivales ----------
-function rivalsTurn(s: GameState) {
+/** `conquered` : quartiers pris par le joueur cette nuit, intouchables jusqu'au tour suivant */
+function rivalsTurn(s: GameState, conquered: Set<string>) {
   for (const r of s.rivals) {
     if (!r.alive) continue;
     const mine = owned(s, r.id);
@@ -352,7 +357,7 @@ function rivalsTurn(s: GameState) {
     // attaque
     if (s.week < 5 || !chance(r.aggression * 0.6)) continue;
     const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter(
-      (d) => d.owner !== r.id && !(d.owner === 'player' && r.truceWeeks > 0),
+      (d) => d.owner !== r.id && !conquered.has(d.id) && !(d.owner === 'player' && r.truceWeeks > 0),
     );
     if (!targets.length) continue;
     targets.sort((a, b) => defenseOf(s, a) - defenseOf(s, b) + (b.racket - a.racket) / 400);
