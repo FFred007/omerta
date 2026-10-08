@@ -218,6 +218,7 @@ export interface GameState {
   /** jour de la semaine en cours (0 = lundi … 6 = dimanche) */
   day?: number;
   speed?: number;
+  lastHeat?: { from: number; to: number; lines?: { label: string; value: number }[] };
   /** effets visuels produits par la dernière résolution */
   fx?: FxEvent[];
   pendingEvent: PendingEvent | null;

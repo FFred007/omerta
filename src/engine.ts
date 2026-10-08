@@ -170,6 +170,49 @@ export function midweek(s: GameState) {
   if (chance(0.4)) s.pendingEvent = rollEvent(s);
 }
 
+export interface HeatLine { label: string; value: number; sure: boolean }
+
+/**
+ * Détail de la heat de la semaine.
+ * Les lignes « sûres » reproduisent exactement le calcul de economy() ; les autres sont des risques possibles.
+ */
+export function heatForecast(s: GameState) {
+  const lines: HeatLine[] = [];
+  let raw = 0;
+  for (const d of owned(s)) {
+    let illegal = 0;
+    let legal = 0;
+    for (const b of d.businesses) {
+      const def = BUSINESSES[b.kind];
+      if (def.illegal) illegal += s.lowProfile ? 0 : def.heat * (d.bribedCop ? 0.5 : 1);
+      else legal += def.heat;
+    }
+    if (illegal) lines.push({ label: `Commerces illégaux · ${d.name}${d.bribedCop ? ' (sergent payé, ÷2)' : ''}`, value: illegal, sure: true });
+    if (legal) lines.push({ label: `Façades légales · ${d.name}`, value: legal, sure: true });
+    raw += illegal + legal;
+  }
+  // projection() arrondit la somme : on reporte l'écart d'arrondi sur la dernière ligne pour que le total soit exact
+  const rounded = Math.round(raw);
+  if (lines.length && rounded !== raw) lines[lines.length - 1].value += rounded - raw;
+  lines.push({ label: 'Retombée naturelle', value: -HEAT_DECAY, sure: true });
+  const after = s.dirty + settle(s).dirtyNet;
+  if (after > DIRTY_STASH_LIMIT) lines.push({ label: `Liquide sale planqué au-delà de ${fmt(DIRTY_STASH_LIMIT)}`, value: Math.ceil((after - DIRTY_STASH_LIMIT) / 5000), sure: true });
+  if (s.councilman) lines.push({ label: 'Le conseiller Doyle calme la presse', value: -3, sure: true });
+  if (s.lowProfile) lines.push({ label: 'Profil bas', value: -6, sure: true });
+  const sure = lines.reduce((a, l) => a + l.value, 0);
+
+  for (const o of s.orders) {
+    const d = district(s, o.districtId);
+    lines.push({ label: `Assaut sur ${d.name}`, value: 5 + d.police * 2, sure: false });
+  }
+  for (const j of s.jobs.filter((x) => x.team.length >= x.minMen)) {
+    const win = j.reward.heat ?? 0;
+    lines.push({ label: `Coup « ${j.title} » : ${win ? `${win > 0 ? '+' : ''}${win} si réussi, ` : ''}+${j.failHeat} si raté`, value: Math.max(win, j.failHeat), sure: false });
+  }
+  if (s.shipments.length) lines.push({ label: `Livraison interceptée par les Prohis (${s.shipments.length} camion${s.shipments.length > 1 ? 's' : ''})`, value: 4, sure: false });
+  return { lines, sure: Math.round(sure * 10) / 10 };
+}
+
 export function startGame(familyName?: string) {
   const s = newGame(familyName);
   generateJobs(s);
@@ -183,6 +226,12 @@ export function startGame(familyName?: string) {
 export function endTurn(s: GameState): LogEntry[] {
   if (s.status !== 'playing' || s.pendingEvent) return [];
   const week = s.week;
+  const heatStart = s.heat;
+  // ce qui est connu d'avance : commerces, retombée, assauts ordonnés
+  const known = heatForecast(s).lines.filter((l) => l.sure || l.label.startsWith('Assaut'));
+  // les assauts sans homme valide n'auront pas lieu
+  const firing = new Set(s.orders.filter((o) => s.members.some((m) => o.memberIds.includes(m.id) && m.status === 'actif')).map((o) => `Assaut sur ${district(s, o.districtId).name}`));
+  const knownLines = known.filter((l) => l.sure || firing.has(l.label));
   const raidedDistricts = new Set<string>();
   s.fx = [];
   s.day = 0;
@@ -201,6 +250,11 @@ export function endTurn(s: GameState): LogEntry[] {
   donArrestCheck(s);
   checkEnd(s);
   publishHerald(s);
+  const explained = knownLines.reduce((a, l) => a + l.value, 0);
+  const rest = Math.round((s.heat - heatStart - explained) * 10) / 10;
+  const lines = knownLines.map((l) => ({ label: l.label, value: l.value }));
+  if (rest) lines.push({ label: 'Coups, livraisons, descentes et événements (détail ci-dessous)', value: rest });
+  s.lastHeat = { from: heatStart, to: s.heat, lines };
 
   s.lastReport = s.log.filter((e) => e.week === week).reverse();
   s.orders = [];

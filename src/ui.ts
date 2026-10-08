@@ -35,6 +35,7 @@ const ui = {
   resolving: false,
   feed: [] as { id: number; text: string; tone: string; week: number; day: number; born: number }[],
   feedId: 0,
+  heatOpen: false,
   shown: { dirty: 0, clean: 0, respect: 0 }, // valeurs affichées (pour les compteurs animés)
 };
 const SPEEDS = [1, 2, 3];
@@ -236,7 +237,7 @@ function topbar() {
       <div class="stat"><span class="k">Caisses</span><span class="v">${stockTotal(s)}<small class="muted">/${storageCap(s)}</small></span></div>
       <div class="stat stat-respect"><span class="k">Respect</span><span class="v">${Math.round(ui.shown.respect)}</span></div>
       <div class="stat"><span class="k">Faveurs</span><span class="v">${s.favors}</span></div>
-      <div class="stat heat"><span class="k">Heat <span class="num ${heatTone}">${s.heat}/100</span></span>
+      <div class="stat heat" data-act="tab" data-id="corruption" role="button" tabindex="0" title="Voir le détail de la heat"><span class="k">Heat <span class="num ${heatTone}">${s.heat}/100</span></span>
         <div class="heat-bar" role="meter" aria-valuenow="${s.heat}" aria-valuemin="0" aria-valuemax="100" aria-label="Heat"><i style="width:${s.heat}%"></i></div>
       </div>
     </div>
@@ -301,7 +302,6 @@ function mapView() {
 function weekCard() {
   const p = projection(s);
   const f = E.settle(s);
-  const net = p.heatGain - E.HEAT_DECAY + (s.councilman ? -3 : 0) + (s.lowProfile ? -6 : 0);
   const blocked = !!s.pendingEvent || s.status !== 'playing';
   const rate = s.launderRate ?? 1;
   const row = (label: string, n: number, cls: string) =>
@@ -346,7 +346,7 @@ function weekCard() {
       <span>Blanchiment <span class="muted">(capacité ${money(p.launderCap)})</span></span>
       <span class="seg">${rates.map(([r, l]) => `<button class="btn small ${rate === r ? 'on' : ''}" data-act="launder" data-id="${r}" aria-pressed="${rate === r}">${l}</button>`).join('')}</span>
     </div>` : ''}
-    <div class="heat-line"><span>Variation de heat (hors combats et coups)</span><span class="num ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span></div>
+    ${heatBlock(false)}
     <div class="end-dock">
       <div class="clock" role="group" aria-label="Horloge">
         <div class="clock-top">
@@ -361,6 +361,42 @@ function weekCard() {
         </div>
       </div>
     </div>
+  </div>`;
+}
+
+const fmtHeat = (n: number) => {
+  const r = Math.round(n * 10) / 10;
+  return `${r > 0 ? '+' : r < 0 ? '−' : ''}${Math.abs(r).toLocaleString('fr-FR')}`;
+};
+
+/** Détail de la heat : ce qui est certain cette semaine, ce qui peut s'ajouter, et ce qui s'est passé la semaine dernière */
+function heatBlock(always: boolean) {
+  const f = E.heatForecast(s);
+  const sure = f.lines.filter((l) => l.sure);
+  const risks = f.lines.filter((l) => !l.sure);
+  const net = Math.round(f.sure);
+  const open = always || ui.heatOpen;
+  const row = (l: E.HeatLine) => `<span>${esc(l.label)}</span><span class="num ${l.value > 0 ? 'danger' : 'clean'}">${fmtHeat(l.value)}</span>`;
+  const lh = s.lastHeat;
+  const lastLines = s.lastReport.filter((e) => /heat|Descente/.test(e.text));
+  return `
+  <div class="heat-box">
+    ${always ? '' : `<button class="heat-line linkrow" data-act="heat-toggle" aria-expanded="${open}">
+      <span>Heat cette semaine <span class="muted">· ${s.heat} → ${clamp(s.heat + net, 0, 100)}${risks.length ? ', plus les risques' : ''}</span></span>
+      <span><span class="num ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span> <span class="muted chev">${open ? '▴' : '▾'}</span></span>
+    </button>`}
+    ${open ? `
+    <div class="heat-detail">
+      <div class="ledger-rows">${sure.map(row).join('')}
+        <span class="total">Certain</span><span class="num total ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span>
+      </div>
+      ${risks.length ? `<h4>Peut s'ajouter dimanche soir</h4><div class="ledger-rows">${risks.map(row).join('')}</div>` : ''}
+      <p class="note">Autres sources possibles : descentes (−8 après coup, mais elles ferment un établissement), commerçants furieux qui te dénoncent (+7), traîtres qui parlent (+18), événements. Au-dessus de 85, les fédéraux peuvent t'arrêter.</p>
+      ${lh ? `<h4>Semaine dernière : ${lh.from} → ${lh.to} (${lh.to - lh.from >= 0 ? '+' : ''}${lh.to - lh.from})</h4>
+        ${lh.lines ? `<div class="ledger-rows">${lh.lines.map((l) => row({ ...l, sure: true })).join('')}</div>` : ''}
+        ${lastLines.length ? `<ul class="log">${lastLines.map((e) => `<li class="tone-${e.tone}">${esc(e.text)}</li>`).join('')}</ul>` : ''}
+        ${lh.from + (lh.lines ?? []).reduce((a, l) => a + l.value, 0) !== lh.to ? '<p class="note">La heat est bornée entre 0 et 100 : l\'excédent est perdu.</p>' : ''}` : ''}
+    </div>` : ''}
   </div>`;
 }
 
@@ -705,6 +741,8 @@ function corruptionPanel() {
   return `
     <h3>Corruption</h3>
     <p class="flavor">Les enveloppes se paient en argent propre, chaque semaine. Si tu ne peux plus payer, tout le monde te lâche d'un coup.</p>
+    <h4>D'où vient ta heat (${s.heat}/100)</h4>
+    ${heatBlock(true)}
     <div class="rows">
       <div class="row"><div class="grow">Le juge Halloran
         <small>Annule ton inculpation une fois la heat au plus haut, et divise par deux les peines de tes hommes · ${money(JUDGE_BRIBE)}/sem. · ${E.JUDGE_MIN_RESPECT} respect requis</small></div>
@@ -900,6 +938,7 @@ app.addEventListener('click', (ev) => {
       return render();
     }
     case 'escort': ui.escort = id as Escort; return render();
+    case 'heat-toggle': ui.heatOpen = !ui.heatOpen; return render();
     case 'fit': ui.qty[id as Good] = Math.max(0, B.freeRoom(s)); return render();
     case 'smuggle': return run(B.orderSmuggle(s, id as Good, ui.qty[id as Good], ui.escort));
     case 'wholesale': return run(B.buyWholesaler(s, id as Good, ui.qty[id as Good]));
