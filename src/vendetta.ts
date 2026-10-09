@@ -53,7 +53,7 @@ export function vendettaJob(s: GameState, v: Vendetta): Job {
     text: `${v.killer} boit son café tous les matins chez le même barbier de ${cityName(v.city)}. Il a tué ${v.victims.join(', ')}. ${v.avengers.length ? 'Ses frères d’armes veulent en être.' : ''}`,
     stat: 'force', difficulty: Math.round(v.force * 1.2 + 2 + (r ? r.strength / 10 : 0)), minMen: 2,
     reward: { respect: 6, rivalHit: 2, heat: 6 }, failHeat: 6, danger: 0.5,
-    rivalId: v.rivalId, relationHit: 15,
+    rivalId: v.rivalId, relationHit: 15, specialist: 'tireur',
   };
 }
 

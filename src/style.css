@@ -635,12 +635,6 @@ select {
 .modal.wide-modal { max-width: 720px; }
 .setup-names { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0; position: relative; z-index: 1; }
 .setup-names label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ivory-dim); }
-.origins { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; position: relative; z-index: 1; }
-.origin { text-align: left; padding: 8px 10px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.18); color: var(--ivory); border-radius: var(--r-sm); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
-.origin b { font-size: 14px; }
-.origin small { font-size: 11.5px; color: var(--ivory-dim); }
-.origin small.trait { color: var(--brass); border: none; padding: 0; background: none; }
-.origin.on { border-color: var(--brass); background: rgba(196, 160, 82, 0.14); }
 .promo { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.14); }
 .checklist { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; }
 .checklist li::before { content: '○ '; color: var(--ivory-dim); }
@@ -699,3 +693,55 @@ select {
 .ch-x { stroke: rgba(235, 224, 196, 0.35); }
 .ch-tip { position: absolute; pointer-events: none; padding: 3px 7px; background: var(--felt); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: 12px; white-space: nowrap; display: flex; flex-direction: column; line-height: 1.2; }
 .ch-tip small { color: var(--ivory-dim); font-size: 10.5px; }
+
+/* ---------- Onglet Famille : vue compacte ---------- */
+.subtabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 4px 0 12px; }
+.subtab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ivory-dim); font: inherit; font-size: 14px; padding: 6px 10px; cursor: pointer; }
+.subtab small { font-family: var(--ledger); font-size: 11px; color: var(--brass-dim); margin-left: 2px; }
+.subtab.on { color: var(--ivory); border-bottom-color: var(--brass); }
+.fam-tools { display: grid; gap: 8px; margin: 10px 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chipbtn { font: inherit; font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: rgba(0, 0, 0, 0.15); color: var(--ivory-dim); cursor: pointer; }
+.chipbtn small { font-family: var(--ledger); font-size: 10.5px; color: var(--brass-dim); }
+.chipbtn.on { border-color: var(--brass); color: var(--ivory); background: rgba(196, 160, 82, 0.14); }
+.selects { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.selects select { max-width: 100%; }
+.mlist { list-style: none; margin: 0; padding: 0; }
+.mhead, .mline { display: grid; grid-template-columns: 30px minmax(0, 1fr) 34px 34px 34px minmax(0, 0.9fr) 14px; gap: 8px; align-items: center; }
+.mhead { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ivory-dim); padding: 0 6px 4px; border-bottom: 1px solid var(--line); }
+.mhead span:nth-child(n+3):nth-child(-n+5) { text-align: center; }
+.mrow { border-bottom: 1px solid rgba(196, 160, 82, 0.12); }
+.mrow.away .mline { opacity: 0.7; }
+.mline { width: 100%; padding: 5px 6px; background: none; border: 0; color: var(--ivory); font: inherit; text-align: left; cursor: pointer; }
+.mline:hover, .mrow.open .mline { background: rgba(196, 160, 82, 0.07); }
+.mline svg, .mline img { border-radius: 50%; }
+.mname { display: flex; flex-direction: column; min-width: 0; }
+.mname b { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mname small { font-size: 11px; color: var(--ivory-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mnum { font-family: var(--ledger); font-size: 13.5px; text-align: center; }
+.mpost { font-size: 12px; color: var(--ivory-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.idle { display: inline-block; font-size: 10.5px; color: var(--whisky); border: 1px solid rgba(201, 138, 58, 0.5); border-radius: 2px; padding: 0 4px; white-space: nowrap; }
+.mchev { color: var(--brass); font-size: 11px; }
+.man-detail { padding: 8px 8px 12px 44px; background: rgba(0, 0, 0, 0.12); }
+.man-detail .who b { font-size: 15px; }
+.man-detail .who .nick { color: var(--brass); font-style: italic; }
+.man-detail .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.mgroup { margin: 6px 0 10px; }
+.mgroup > summary { cursor: pointer; padding: 5px 2px; font-size: 13.5px; }
+.bondlist { list-style: none; margin: 4px 0 10px; padding: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.bondlist li { padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--r-sm); background: rgba(0, 0, 0, 0.12); }
+@media (max-width: 600px) {
+  .mhead { display: none; }
+  .mline { grid-template-columns: 30px minmax(0, 1fr) 28px 28px 28px 12px; gap: 6px; }
+  .mpost { grid-column: 2 / -1; grid-row: 2; font-size: 11px; }
+  .man-detail { padding-left: 8px; }
+}
+
+/* ---------- Équipes : spécialiste, meilleure équipe ---------- */
+.specialist { font-size: 12.5px; color: var(--ivory-dim); margin: 6px 0; }
+.specialist b { color: var(--ivory); font-weight: 400; }
+.team-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 4px; }
+.team-names { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 200px; min-width: 0; font-size: 12.5px; }
+.tchip { padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px; background: rgba(196, 160, 82, 0.1); font-size: 12px; }
+details.pick > summary { cursor: pointer; font-size: 12.5px; color: var(--brass); margin: 4px 0; }
+details.pick .team { max-height: 260px; overflow-y: auto; }

@@ -21,8 +21,42 @@ export function teamSkill(s: GameState, job: Job, ids = job.team) {
   return s.members
     .filter((m) => ids.includes(m.id))
     .reduce((t, m) => t + (job.stat === 'force' ? m.force : m.discretion) + (m.rank === 'capo' ? 2 : 0) + traitBonus(m, job.stat), 0)
-    + donMorale(s, ids) + teamBondBonus(s, ids) + avengerBonus(s, job, ids);
+    + donMorale(s, ids) + teamBondBonus(s, ids) + avengerBonus(s, job, ids) + specialistBonus(s, job, ids) + donStatBonus(s, job, ids);
 }
+
+export const SPECIALIST_BONUS = 3;
+/** Le bon profil sur le coup : +3 si au moins un homme a le trait recherché */
+export function specialistBonus(s: GameState, job: Job, ids = job.team) {
+  return job.specialist && s.members.some((m) => ids.includes(m.id) && has(m, job.specialist!)) ? SPECIALIST_BONUS : 0;
+}
+/** Le Don sur un coup qui demande du Verbe ou du Flair : la moitié de sa stat */
+export function donStatBonus(s: GameState, job: Job, ids = job.team) {
+  if (!job.donStat) return 0;
+  const don = s.members.find((m) => m.isDon && ids.includes(m.id));
+  return don ? Math.floor((don[job.donStat] ?? 5) / 2) : 0;
+}
+export const DON_STAT_LABEL = { verbe: 'Verbe', flair: 'Flair' } as const;
+
+/** Spécialiste recherché et stat du Don pour chaque coup */
+const SPECIALTY: Record<string, Pick<Job, 'specialist' | 'donStat'>> = {
+  dette: { specialist: 'roc', donStat: 'verbe' },
+  boxe: { specialist: 'beauparleur', donStat: 'flair' },
+  assurance: { specialist: 'comptable', donStat: 'flair' },
+  banque: { specialist: 'tireur' },
+  temoin: { specialist: 'fantome' },
+  convoi: { specialist: 'chauffeur' },
+  syndicat: { specialist: 'negociateur', donStat: 'verbe' },
+  camion: { specialist: 'chauffeur' },
+  cave: { specialist: 'fantome' },
+  incendie: { specialist: 'tetebrulee' },
+  comptable: { specialist: 'comptable', donStat: 'flair' },
+  morphine: { specialist: 'infirmier' },
+  debauche: { specialist: 'recruteur', donStat: 'verbe' },
+  greve: { specialist: 'brute' },
+  poker: { specialist: 'sangfroid', donStat: 'flair' },
+  vendetta: { specialist: 'tireur' },
+};
+export const specialtyOf = (key: string) => SPECIALTY[key] ?? {};
 
 /** Le Don sur le coup : +1 par homme à ses côtés */
 export function donMorale(s: GameState, ids: number[]) {
@@ -158,6 +192,43 @@ const TEMPLATES: Template[] = [
       rivalId: r!.id, relationHit: 15,
     }),
   },
+  {
+    key: 'morphine', weight: 2, when: (s) => s.week >= 3,
+    make: (_s, k) => ({
+      title: 'La morphine de Saint-Janvier',
+      text: "La pharmacie de l'hôpital reçoit sa livraison le mardi. Une blouse blanche, un chariot, et personne ne pose de questions.",
+      stat: 'discretion', difficulty: Math.round(12 * k), minMen: 1,
+      reward: { dirty: randInt(14, 20) * 100 }, failHeat: 7, danger: 0.35,
+    }),
+  },
+  {
+    key: 'debauche', weight: 2, needsRival: true, when: (s) => s.week >= 4,
+    make: (_s, k, r) => ({
+      title: `Débaucher les hommes de ${r!.name}`,
+      text: `Trois soldats de ${r!.boss} ne sont plus payés depuis un mois. Un verre, une enveloppe, une promesse.`,
+      stat: 'discretion', difficulty: Math.round(13 * k), minMen: 1,
+      reward: { rivalHit: 3, respect: 2 }, failHeat: 4, danger: 0.3,
+      rivalId: r!.id, relationHit: 14,
+    }),
+  },
+  {
+    key: 'greve', weight: 2, when: (s) => s.week >= 3,
+    make: (_s, k) => ({
+      title: 'Briser la grève des abattoirs',
+      text: "Les patrons des abattoirs paient bien, et en argent propre, pour que les piquets de grève se dispersent avant lundi.",
+      stat: 'force', difficulty: Math.round(12 * k), minMen: 2,
+      reward: { clean: randInt(12, 18) * 100, heat: 4 }, failHeat: 6, danger: 0.35,
+    }),
+  },
+  {
+    key: 'poker', weight: 2,
+    make: (_s, k) => ({
+      title: 'Une partie de poker au Grand Hôtel',
+      text: "Un héritier de Chicago joue gros tous les jeudis. Un croupier à nous, un jeu marqué, et du sang-froid.",
+      stat: 'discretion', difficulty: Math.round(11 * k), minMen: 1,
+      reward: { dirty: randInt(12, 22) * 100 }, failHeat: 4, danger: 0.2,
+    }),
+  },
 ];
 
 /** Tire 3 ou 4 coups pour la semaine */
@@ -177,8 +248,7 @@ export function generateJobs(s: GameState) {
     used.add(t.key);
     const r = t.needsRival ? pick(rivals) : undefined;
     const made = t.make(s, scale, r);
-    if (s.career && s.career.rank !== 'don' && made.minMen > s.members.filter((m) => m.status === 'actif').length) continue;
-    jobs.push({ id: nextId(s), key: t.key, team: [], city, ...made });
+    jobs.push({ id: nextId(s), key: t.key, team: [], city, ...made, ...specialtyOf(t.key) });
   }
   // les vendettas en cours : un coup de vengeance par tueur, dans sa ville
   for (const v of activeVendettas(s).slice(0, 2)) jobs.push(vendettaJob(s, v));

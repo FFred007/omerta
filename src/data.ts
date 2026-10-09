@@ -191,7 +191,11 @@ export const COP_BRIBE = 300; // propre / semaine
 export const JUDGE_BRIBE = 800;
 export const COUNCIL_BRIBE = 1200;
 export const PROMOTE_COST = 1000;
-export const DIRTY_STASH_LIMIT = 10000;
+/** Argent sale qu'on peut planquer sans attirer l'attention, selon le palier de la famille */
+export const STASH_LIMITS = [10000, 20000, 35000, 50000, 75000];
+export const STASH_STEP = 10000; // +1 heat par tranche au-delà
+export const stashLimit = (respect: number) => STASH_LIMITS[tierOf(respect)];
+export const stashHeat = (dirty: number, respect: number) => (dirty > stashLimit(respect) ? Math.ceil((dirty - stashLimit(respect)) / STASH_STEP) : 0);
 
 export type DistrictSeed = Omit<District, 'businesses' | 'bribedCop' | 'shops' | 'tariff'> & { businesses: BusinessKind[] };
 

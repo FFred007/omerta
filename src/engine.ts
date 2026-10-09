@@ -1,4 +1,4 @@
-import { BUSINESSES, COUNCIL_BRIBE, DIRTY_STASH_LIMIT, JUDGE_BRIBE, PROMOTE_COST } from './data';
+import { BUSINESSES, COUNCIL_BRIBE, JUDGE_BRIBE, PROMOTE_COST, stashHeat, stashLimit } from './data';
 import { brigadeActive, dropSenator, endgameTick, politicsHeatLines, politicsRaids } from './endgame';
 import { circleTick, initCircle } from './circle';
 import { rollEvent } from './events';
@@ -23,7 +23,6 @@ import { cityName, cityOf, cityDistricts, donCity, holder, isOpen, memberCity, r
 import { breachTruce, commissionTick, truceActive } from './commission';
 import { CITIES } from './data';
 import { finalize } from './score';
-import { CREW_MAX, careerRank, careerTick, generateMissions, inCareer, informantTick, rankAtLeast } from './career';
 import { bondsTick, onDeath, onPromote, shareOp } from './bonds';
 import { bizHeat, bizName, buildBlocker, owns, resale, respectFromBuildings } from './buildings';
 import { onKilled, vendettasTick } from './vendetta';
@@ -93,7 +92,6 @@ export function hire(s: GameState, recruitId: number): ActionResult {
   const r = s.recruits.find((x) => x.id === recruitId);
   if (!r) return fail('Recrue introuvable.');
   const cost = recruitCost(s, r);
-  if (inCareer(s) && s.members.filter((m) => !m.isDon && !m.isChild).length >= CREW_MAX[careerRank(s)]) return fail(`À ton rang, tu ne peux pas avoir plus de ${CREW_MAX[careerRank(s)]} hommes.`);
   if (s.dirty + s.clean < cost) return fail("Pas assez d'argent.");
   const fromDirty = Math.min(s.dirty, cost);
   s.dirty -= fromDirty;
@@ -228,7 +226,8 @@ export function heatForecast(s: GameState) {
   if (chatter) lines.push({ label: `Bavard${chatter > 1 ? 's' : ''} dans la famille`, value: chatter, sure: true });
   lines.push({ label: 'Retombée naturelle', value: -HEAT_DECAY, sure: true });
   const after = s.dirty + settle(s).dirtyNet;
-  if (after > DIRTY_STASH_LIMIT) lines.push({ label: `Liquide sale planqué au-delà de ${fmt(DIRTY_STASH_LIMIT)}`, value: Math.ceil((after - DIRTY_STASH_LIMIT) / 5000), sure: true });
+  const stash = stashHeat(after, s.respect);
+  if (stash) lines.push({ label: `Liquide sale planqué au-delà de ${fmt(stashLimit(s.respect))} (+1 par tranche de 10 000 $)`, value: stash, sure: true });
   if (s.councilman) lines.push({ label: 'Le conseiller Doyle calme la presse', value: -3, sure: true });
   if (s.lowProfile) lines.push({ label: 'Profil bas', value: -6, sure: true });
   const sure = lines.reduce((a, l) => a + l.value, 0);
@@ -266,7 +265,7 @@ export function pushSnapshot(s: GameState, week: number) {
   const h = (s.history ??= []);
   h.push({
     week, dirty: Math.round(s.dirty), clean: Math.round(s.clean), heat: Math.round(s.heat), dossier: Math.round(s.dossier ?? 0),
-    respect: Math.round(s.respect), districts: owned(s).length, ...(s.career && s.career.rank !== 'don' ? { trust: s.career.trust } : {}),
+    respect: Math.round(s.respect), districts: owned(s).length,
   });
   if (h.length > 150) h.splice(0, h.length - 150);
 }
@@ -291,29 +290,29 @@ export function endTurn(s: GameState): LogEntry[] {
   const conquered = new Set<string>();
   resolvePlayerAttacks(s, conquered);
   resolveJobs(s);
-  careerTick(s);
-  if (!inCareer(s)) heistTick(s);
+  heistTick(s);
   economy(s);
   resolveShipments(s);
   resolveRaids(s, raidedDistricts);
   marketTick(s);
   rivalsTurn(s, conquered);
   relationsTick(s);
-  if (!inCareer(s)) commissionTick(s);
+  commissionTick(s);
   shopsTick(s);
   crewTurn(s, raidedDistricts);
+  idleTick(s, week);
   bondsTick(s);
   vendettasTick(s);
   familyTick(s);
-  if (!inCareer(s)) { initCircle(s); circleTick(s); }
+  initCircle(s);
+  circleTick(s);
   networkTick(s);
-  if (rankAtLeast(s, 'capo')) huntersTick(s);
+  huntersTick(s);
   dossierTick(s);
   heatWarnings(s);
-  if (rankAtLeast(s, 'capo')) pressureTick(s);
-  if (!inCareer(s)) endgameTick(s);
-  if (!inCareer(s)) objectivesTick(s);
-  informantTick(s);
+  pressureTick(s);
+  endgameTick(s);
+  objectivesTick(s);
   checkEnd(s);
   publishHerald(s);
   const explained = knownLines.reduce((a, l) => a + l.value, 0);
@@ -331,7 +330,6 @@ export function endTurn(s: GameState): LogEntry[] {
   s.lowProfile = false;
   s.week += 1;
   generateJobs(s);
-  generateMissions(s);
 
   // nouvelles recrues chaque semaine
   s.recruits = [];
@@ -469,7 +467,6 @@ export interface Settlement {
   launderCap: number;
   bribes: number;
   bribesOk: boolean;
-  tribute: number;
   dirtyNet: number;
   cleanNet: number;
 }
@@ -492,11 +489,6 @@ export function settle(s: GameState): Settlement {
   clean -= salClean;
   due -= salClean;
 
-  // le capo reverse sa part au Don
-  const tributeDue = careerRank(s) === 'capo' ? Math.round(p.dirtyIn * (s.career?.kickup ?? 0.3)) : 0;
-  const tribute = Math.min(dirty, tributeDue);
-  dirty -= tribute;
-
   const cap = Math.round(p.launderCap * (s.launderRate ?? 1));
   const launderTaken = Math.min(dirty, cap);
   const launderGiven = Math.round(launderTaken * (1 - launderFee(s)));
@@ -508,7 +500,7 @@ export function settle(s: GameState): Settlement {
 
   return {
     dirtyIn: p.dirtyIn, cleanIn: p.cleanIn, salaries: p.salaries, salDirty, salClean, unpaid: due,
-    launderTaken, launderGiven, launderCap: cap, bribes: p.bribes, bribesOk, tribute,
+    launderTaken, launderGiven, launderCap: cap, bribes: p.bribes, bribesOk,
     dirtyNet: dirty - s.dirty, cleanNet: clean - s.clean,
   };
 }
@@ -552,8 +544,8 @@ function economy(s: GameState) {
 
   // heat
   let heat = p.heatGain - HEAT_DECAY;
-  if (s.dirty > DIRTY_STASH_LIMIT) {
-    const extra = Math.ceil((s.dirty - DIRTY_STASH_LIMIT) / 5000);
+  const extra = stashHeat(s.dirty, s.respect);
+  if (extra) {
     heat += extra;
     log(s, 'police', `Trop de liquide sale planqué : les fédéraux flairent quelque chose (+${extra} heat).`);
   }
@@ -637,7 +629,6 @@ function rivalsTurn(s: GameState, conquered: Set<string>) {
     const targets = uniqueDistricts(mine.flatMap((d) => neighbors(s, d))).filter((d) => {
       if (d.owner === r.id || conquered.has(d.id)) return false;
       if (d.gate && d.owner === 'neutral' && !isOpen(s, cityOf(d))) return false; // la gare attend la famille du joueur
-      if (rival(s, d.owner)?.employer && owned(s, d.owner).length <= 1) return false; // la famille du joueur ne disparaît pas pendant l'ascension
       if (d.owner === 'player') return !r.alliance && r.truceWeeks === 0 && !spareFriend;
       return true;
     });
@@ -714,6 +705,16 @@ function rivalAttack(s: GameState, r: RivalFamily, d: District) {
 }
 
 // ---------- Hommes : loyauté, trahisons, convalescence ----------
+/** Les hommes laissés en réserve sans rien faire */
+function idleTick(s: GameState, week: number) {
+  for (const m of s.members) {
+    if (m.isDon || m.isChild) continue;
+    if (m.status !== 'actif' || m.assignment || m.lastOp === week) m.idle = 0;
+    else m.idle = (m.idle ?? 0) + 1;
+  }
+}
+export const IDLE_WEEKS = 4;
+
 function crewTurn(s: GameState, raided: Set<string>) {
   for (const d of s.districts) if ((d.unrest ?? 0) > 0) d.unrest!--;
   // les indépendants s'organisent avec le temps
@@ -773,7 +774,6 @@ function heatWarnings(s: GameState) {
 export function checkEnd(s: GameState) {
   if (s.status !== 'playing') return;
   const n = owned(s).length;
-  if (inCareer(s)) return; // pendant l'ascension, la partie ne s'arrête que si le joueur tombe
   if (n === 0) {
     finalize(s, 'ruine', 'Ta famille a été rayée de la carte. Plus un seul quartier ne te paie.');
   } else if (activeMembers(s).length === 0 && s.members.length === 0 && s.dirty + s.clean < 300) {

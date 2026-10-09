@@ -134,6 +134,10 @@ export interface Job {
   city?: string;
   /** coup de vengeance contre un tueur nommé */
   vendettaId?: number;
+  /** trait qui donne +3 si un homme de l'équipe l'a */
+  specialist?: TraitId;
+  /** stat du Don qui compte s'il est sur le coup */
+  donStat?: 'verbe' | 'flair';
 }
 
 export interface Loan {
@@ -188,6 +192,10 @@ export interface Member {
   /** capo qui a voté contre toi à la succession */
   grudge?: boolean;
   lastGift?: number;
+  /** dernière semaine où il a pris part à une opération */
+  lastOp?: number;
+  /** semaines d'affilée en réserve sans rien faire */
+  idle?: number;
 }
 
 export interface Spouse {
@@ -384,7 +392,7 @@ export interface GameState {
   /** carte tirée au hasard (nouvelles parties depuis la v0.8) */
   generatedMap?: boolean;
   /** l'ascension : de simple associé à Don (absent = partie commencée en tant que Don) */
-  career?: Career;
+  career?: LegacyCareer;
   /** jour de la semaine en cours (0 = lundi … 6 = dimanche) */
   day?: number;
   speed?: number;
@@ -518,26 +526,7 @@ export interface Heist {
   log: string[];
 }
 
-export type CareerRank = 'associe' | 'soldat' | 'capo' | 'don';
-export type MissionStat = 'force' | 'discretion' | 'verbe' | 'flair';
-export interface Mission {
-  id: number;
-  key: string;
-  title: string;
-  text: string;
-  giver: string; // qui donne l'ordre
-  stat: MissionStat;
-  difficulty: number;
-  reward: { dirty: number; trust: number; respect?: number };
-  failTrust: number;
-  failHeat: number;
-  danger: number; // 0..1 : blessure ou prison si ça rate
-  accepted: boolean;
-  crew: number[]; // hommes du joueur qui l'accompagnent (force et discrétion seulement)
-  skim: boolean; // se servir dans la caisse
-  rivalId?: string;
-}
-/** Un personnage de la famille : le Don, le consigliere, les capos, les anciens */
+/** Un membre du cercle : le consigliere, les anciens */
 export interface Notable {
   id: string;
   role: 'don' | 'consigliere' | 'capo' | 'ancien';
@@ -554,28 +543,10 @@ export interface Notable {
   traits?: string[];
   lastGift?: number;
 }
-export interface Career {
-  rank: CareerRank;
-  origin: string;
-  employer: string; // id de la famille dans s.rivals
-  trust: number; // confiance du Don 0..100
-  missionsDone: number;
-  missionsTotal: number; // réussies depuis le début
-  rankWeek: number;
-  missions: Mission[];
-  kickup: number; // part reversée au Don par le capo (0,2 · 0,3 · 0,4)
-  notables: Notable[];
-  donHealth: number;
-  dying?: boolean;
-  lost?: string; // nom du capo qui a pris la place du Don à la place du joueur
-  path?: 'succession' | 'coup' | 'trahison';
-  /** complot en cours : il se joue la nuit de dimanche indiquée */
-  plot?: { kind: 'coup' | 'feds' | 'rival'; week: number; rival?: string } | null;
-  /** devenu Don en livrant l'ancien aux fédéraux */
-  informant?: boolean;
-  /** famille rivale à qui le joueur doit le trône */
-  debtTo?: string;
-  history: { week: number; text: string }[];
+/** Vestige des sauvegardes de l'ancien mode « ascension » (converties en partie de Don au chargement) */
+export interface LegacyCareer {
+  rank: string;
+  employer: string;
 }
 
 /** État de la famille à la fin d'une semaine */
@@ -587,5 +558,4 @@ export interface Snapshot {
   dossier: number;
   respect: number;
   districts: number;
-  trust?: number;
 }

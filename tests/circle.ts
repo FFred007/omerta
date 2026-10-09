@@ -2,7 +2,6 @@
 import * as E from '../src/engine';
 import * as CI from '../src/circle';
 import * as F from '../src/family';
-import { becomeDon, startCareer } from '../src/career';
 import { resolveEvent } from '../src/events';
 import { donOf } from '../src/don';
 import { makeMember } from '../src/state';
@@ -105,23 +104,6 @@ function withHeir(): { s: GameState; heir: Member } {
   const b0 = CI.heirBonus(s, F.currentHeir(s));
   check(CI.presentHeir(s).ok && CI.heirBonus(s, F.currentHeir(s)) === b0 + CI.PRESENT_GAIN, `présentation : +${CI.PRESENT_GAIN}`);
   check(!CI.presentHeir(s).ok, 'une présentation toutes les 4 semaines');
-}
-
-// 5. l'ascension : le mentor devient consigliere, le favori reste et rumine
-{
-  const s = startCareer({ first: 'Tony', last: 'Bianchi', origin: 'rues', classic: true });
-  const c = s.career!;
-  c.rank = 'capo';
-  const mentor = c.notables.find((n) => n.id === 'mentor')!;
-  mentor.affinity = 50;
-  const fav = c.notables.find((n) => n.role === 'capo' && n.id !== 'mentor')!;
-  fav.favori = true;
-  becomeDon(s, 'succession');
-  const cons = CI.consigliere(s);
-  check(cons?.name === mentor.name && cons.affinity === 70, `${mentor.name} devient consigliere (affinité ${cons?.affinity})`);
-  const favM = s.members.find((m) => m.name === fav.name);
-  check(!!favM?.grudge && favM.loyalty === 25, 'le favori battu reste capo, rancunier');
-  check(CI.heirTally(s).pretender?.name === fav.name, 'il serait le prétendant');
 }
 
 console.log(fails ? `${fails} échec(s)` : 'tout est bon');

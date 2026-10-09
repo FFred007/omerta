@@ -1,6 +1,5 @@
 // Fin de partie : les menaces d'une famille qui a grandi (expéditions, révoltes, brigade fédérale)
 // et ce qu'on peut acheter avec tout cet argent (le maire, un sénateur, la charité).
-import * as CA from './career';
 import { cityOf, donCity } from './cities';
 import { addDossier } from './dossier';
 import { casualties } from './engine';
@@ -14,7 +13,7 @@ const ok: Result = { ok: true };
 const fail = (error: string): Result => ({ ok: false, error });
 const fmt = (n: number) => `$${Math.round(n).toLocaleString('fr-FR')}`;
 
-const active = (s: GameState) => !CA.inCareer(s) && s.status === 'playing';
+const active = (s: GameState) => s.status === 'playing';
 
 // =====================================================================
 // Les expéditions : une famille d'une autre ville débarque à la gare
@@ -36,7 +35,7 @@ function planExpedition(s: GameState) {
   const inCity = mine.filter((d) => cityOf(d) === home);
   const pool = inCity.length ? inCity : mine;
   const city = cityOf(pool[0]);
-  const r = s.rivals.filter((x) => x.alive && !x.alliance && !x.employer && x.aggression > 0.1 && (x.city ?? 'corrano') !== city).sort((a, b) => b.strength - a.strength)[0];
+  const r = s.rivals.filter((x) => x.alive && !x.alliance && x.aggression > 0.1 && (x.city ?? 'corrano') !== city).sort((a, b) => b.strength - a.strength)[0];
   if (!r) return;
   const target = pool.find((d) => d.gate) ?? [...pool].sort((a, b) => b.racket - a.racket)[0];
   const force = Math.round(r.strength * 0.6 + s.week / 8 + mine.length / 2);

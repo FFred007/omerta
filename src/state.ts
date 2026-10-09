@@ -190,6 +190,20 @@ export function migrate(s: GameState) {
   }
   s.cities ??= { corrano: { open: true, governorId: null } };
   s.commission ??= initCommission(s);
+  // l'ancien mode « ascension » n'existe plus : une partie en cours devient une partie de Don
+  if (s.career) {
+    const c = s.career;
+    if (c.rank !== 'don') {
+      s.districts.filter((d) => d.owner === c.employer).forEach((d) => { d.owner = 'player'; d.unrest = 0; });
+      const emp = s.rivals.find((r) => r.id === c.employer);
+      if (emp) { emp.alive = false; emp.employer = false; }
+      const don = s.members.find((m) => m.isDon);
+      const last = don?.name.split(' ').slice(1).join(' ');
+      if (last) s.familyName = `Famille ${last}`;
+      s.orders = [];
+    }
+    delete s.career;
+  }
   s.children ??= [];
   s.generation ??= 1;
   if (s.status === 'playing' && !s.members.some((m) => m.isDon) && !s.regency) {
@@ -221,6 +235,7 @@ export function fx(s: GameState, kind: import('./types').FxKind, d?: string) {
 
 /** Expérience + annonce des montées de niveau dans le journal */
 export function award(s: GameState, m: Member, amount: number, stat: JobStat) {
+  m.lastOp = s.week;
   if (m.isDon) {
     m.xp = (m.xp ?? 0) + amount * 2;
     m.level ??= 0;
@@ -228,7 +243,7 @@ export function award(s: GameState, m: Member, amount: number, stat: JobStat) {
       m.xp -= donXpForNext(m.level);
       m.level += 1;
       m.points = (m.points ?? 0) + 1;
-      log(s, 'good', s.career && s.career.rank !== 'don' ? `Tu passes niveau ${m.level} : 1 point à placer (onglet Toi).` : `Le Don passe niveau ${m.level} : 1 point à placer (onglet Le Don).`);
+      log(s, 'good', `Le Don passe niveau ${m.level} : 1 point à placer (onglet Le Don).`);
     }
     return;
   }

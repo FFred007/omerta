@@ -1,15 +1,26 @@
 // Le cercle du Don : consigliere, anciens et capos. Ils conseillent, gardent rancune, et votent pour l'héritier.
-import { makeNotable } from './career';
+import { FIRST_NAMES, LAST_NAMES } from './data';
 import { childAge, crown, currentHeir } from './family';
 import { finalize } from './score';
 import { donOf } from './don';
-import { chance, clamp, log, news, randInt, winChance } from './state';
+import { chance, clamp, log, news, pick, randInt, winChance } from './state';
 import type { Child, GameState, Member, Notable, PendingEvent } from './types';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
 const fail = (error: string): Result => ({ ok: false, error });
 const fmt = (n: number) => `$${Math.round(n).toLocaleString('fr-FR')}`;
+
+const NOTABLE_NICKS = ['le Sage', 'la Fouine', 'Doigts d’Or', 'le Taureau', 'l’Évêque', 'Bouche Cousue', 'le Dentiste', 'Belles Manières', 'le Gros', 'la Belette', 'Quatre-Saisons', 'le Pharmacien'];
+export function makeNotable(role: Notable['role'], id: string, age: number, used: Set<string>, affinity: number): Notable {
+  let name = '';
+  const lasts = new Set([...used].map((n) => n.split(' ').slice(1).join(' ')));
+  for (let i = 0; i < 40 && (!name || used.has(name) || lasts.has(name.split(' ').slice(1).join(' '))); i++) name = `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`;
+  used.add(name);
+  const nick = pick(NOTABLE_NICKS.filter((n) => !used.has(n))) ?? 'le Vieux';
+  used.add(nick);
+  return { id, role, name, nickname: nick, seed: randInt(1, 1e9), age, affinity, rivalPull: randInt(5, 25) };
+}
 
 export const GIFT_COST = 800;
 export const PRESENT_COST = 1500;
@@ -38,27 +49,6 @@ export function initCircle(s: GameState) {
     makeNotable('ancien', 'ancien2', 72, used, randInt(15, 35)),
   ];
   s.heirFavor ??= 0;
-}
-
-/** Fin de l'ascension : le mentor devient consigliere, les anciens restent */
-export function circleFromCareer(s: GameState, path: 'succession' | 'coup' | 'trahison') {
-  const c = s.career!;
-  const used = usedNames(s);
-  const out: Notable[] = [];
-  const mentor = c.notables.find((n) => n.id === 'mentor');
-  const oldCons = c.notables.find((n) => n.role === 'consigliere');
-  if (mentor && mentor.affinity > 0) {
-    out.push({ ...mentor, id: 'consigliere', role: 'consigliere', affinity: clamp(mentor.affinity + 20, -100, 100), favori: false, rivalPull: randInt(5, 20) });
-    if (oldCons && oldCons.affinity >= -20) out.push({ ...oldCons, id: 'ancien_cons', role: 'ancien', grudge: oldCons.affinity <= (oldCons.rivalPull ?? 25) });
-  } else if (oldCons && oldCons.affinity >= 0) out.push({ ...oldCons, rivalPull: randInt(5, 20) });
-  else out.push(makeNotable('consigliere', 'consigliere', 58, used, 15));
-  for (const n of c.notables.filter((x) => x.role === 'ancien')) {
-    const against = n.affinity <= (n.rivalPull ?? 25);
-    if (path !== 'succession' && n.affinity < 0) continue; // ils ne pardonnent pas le sang du Don
-    out.push({ ...n, grudge: against, rivalPull: randInt(10, 25) });
-  }
-  s.circle = out;
-  s.heirFavor = 0;
 }
 
 // ---------- Actions ----------

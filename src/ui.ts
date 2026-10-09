@@ -10,10 +10,10 @@ import * as HU from './hunters';
 import * as HE from './heist';
 import { activeVendettas } from './vendetta';
 import * as BL from './buildings';
-import * as CA from './career';
 import * as AD from './advisor';
 import * as CI from './circle';
 import * as EG from './endgame';
+import * as TM from './teams';
 import { SLOT_MAX, UPGRADES } from './data';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
@@ -21,7 +21,7 @@ import * as B from './booze';
 import * as D from './diplomacy';
 import * as E from './engine';
 import { resolveEvent } from './events';
-import { DON_TRAITS, TRAITS, rankTitle, xpForNext, type TraitId } from './traits';
+import { DON_TRAITS, TRAITS, has, rankTitle, xpForNext, type TraitId } from './traits';
 import { BRANCHES, DON_STATS, STAT_CAP, TALENTS, ageOf, canLearn, donOf, donXpForNext, launderFee, learnTalent, spendPoint, type Branch, type DonStat, type TalentId } from './don';
 import * as F from './family';
 import { portrait, seedOf } from './portraits';
@@ -29,7 +29,7 @@ import * as NET from './network';
 import { acquittalChance, dossierForecast } from './dossier';
 import { COALITION_AT, inCoalition } from './pressure';
 import { progress as objProgress, rewardText as objReward } from './objectives';
-import { jobChance, teamSkill, toggleJobMember } from './jobs';
+import { DON_STAT_LABEL, SPECIALIST_BONUS, donStatBonus, jobChance, setJobTeam, specialistBonus, teamSkill, toggleJobMember } from './jobs';
 import { ALIBI_HEAT, favorAlibi, favorFreePrisoner, moodLabel, setTariff } from './shops';
 import {
   activeMembers, attackPower, clamp, clearSave, defenseOf, district, isAttackable, load, membersIn, onAttack, onJob,
@@ -37,7 +37,7 @@ import {
 } from './state';
 import type { BusinessKind, District, Escort, GameState, Good, Job, Member, Owner, RivalFamily, Tariff } from './types';
 
-type Tab = 'quartier' | 'missions' | 'relations' | 'don' | 'business' | 'coups' | 'famille' | 'villes' | 'commission' | 'corruption' | 'rivaux' | 'journal';
+type Tab = 'quartier' | 'relations' | 'don' | 'business' | 'coups' | 'famille' | 'villes' | 'commission' | 'corruption' | 'rivaux' | 'journal';
 
 const ui = {
   tab: 'quartier' as Tab,
@@ -47,7 +47,7 @@ const ui = {
   expedition: new Set<number>(), // équipe pour prendre pied dans une ville
   showIntro: false,
   newGame: false, // l'intro sert à créer la partie
-  setup: { mode: 'career' as 'career' | 'don', origin: 'rues', first: 'Tony', last: 'Bianchi', classic: false },
+  setup: { first: 'Vittorio', last: 'Moretti', classic: false },
   toast: '',
   toastTimer: 0,
   confirm: '', // clé du bouton en attente de confirmation
@@ -61,6 +61,13 @@ const ui = {
   feed: [] as { id: number; text: string; tone: string; week: number; day: number; born: number }[],
   feedId: 0,
   heatOpen: false,
+  jobOpen: new Set<number>(),
+  famView: 'hommes' as 'hommes' | 'recrues' | 'liens',
+  famFilter: 'all',
+  famSort: 'loyalty',
+  famGroup: false,
+  famOpen: null as number | null,
+  famClosed: new Set<string>(),
   bilanSeen: -1, // semaine dont le bilan a été refermé
   advisorOpen: true,
   shown: { dirty: 0, clean: 0, respect: 0 }, // valeurs affichées (pour les compteurs animés)
@@ -69,7 +76,7 @@ const SPEEDS = [1, 2, 3];
 const DAY_MS = 2600; // durée d'un jour à vitesse ×1
 
 let s: GameState = load() ?? E.startGame();
-if (!CA.inCareer(s) && s.status === 'playing') CI.initCircle(s);
+if (s.status === 'playing') CI.initCircle(s);
 if (s.week === 1 && s.log.length <= 1) { ui.showIntro = true; ui.newGame = true; }
 ui.city = CT.donCity(s);
 if (CT.cityOf(district(s, ui.selected)) !== ui.city) ui.selected = CT.ownedIn(s, ui.city)[0]?.id ?? ui.selected;
@@ -93,8 +100,7 @@ function ownerColor(o: Owner) {
   return rival(s, o)!.color;
 }
 function ownerName(o: Owner) {
-  if (o === 'player') return CA.inCareer(s) ? 'Ton quartier' : s.familyName;
-  if (rival(s, o)?.employer) return `${rival(s, o)!.name} (ta famille)`;
+  if (o === 'player') return s.familyName;
   if (o === 'neutral') return 'Indépendants';
   return rival(s, o)!.name;
 }
@@ -287,7 +293,7 @@ function topbar() {
     <div class="brand">
       ${donOf(s) ? `<button class="brand-don" data-act="tab" data-id="don" aria-label="Voir le Don">${memberPortrait(donOf(s)!, 40)}</button>` : ''}
       <h1>Omertà</h1>
-      <span class="date">${CA.inCareer(s) ? `${esc(donOf(s)?.name ?? '')} · ${CA.RANK_LABEL[CA.careerRank(s)]} de la ${esc(s.familyName)} · semaine ${s.week} · confiance du Don ${s.career!.trust}/100` : `${esc(s.familyName)} · ${s.commission?.chair ? 'Capo dei Capi' : rankOf(s.respect)} · semaine ${s.week} · ${donOf(s) ? 'le Don' : 'la famille'} à ${esc(CT.cityName(CT.donCity(s)))}`}</span>
+      <span class="date">${esc(s.familyName)} · ${s.commission?.chair ? 'Capo dei Capi' : rankOf(s.respect)} · semaine ${s.week} · ${donOf(s) ? 'le Don' : 'la famille'} à ${esc(CT.cityName(CT.donCity(s)))}</span>
     </div>
     <div class="ledger-strip">
       <div class="stat stat-dirty"><span class="k">Argent sale</span><span class="v dirty">${money(ui.shown.dirty)}</span></div>
@@ -328,7 +334,7 @@ function advisorCard() {
       ${b!.gained.length || b!.lost.length ? `<p class="bilan-d">${b!.gained.length ? `<span class="clean">Pris : ${b!.gained.map(esc).join(', ')}</span>` : ''}${b!.gained.length && b!.lost.length ? ' · ' : ''}${b!.lost.length ? `<span class="danger">Perdu : ${b!.lost.map(esc).join(', ')}</span>` : ''}</p>` : ''}
     </div>` : '';
   const list = items.length
-    ? `<ol class="adv-list">${items.map((x) => `<li><button class="adv-item ${x.tone}" data-act="${x.select ? 'select' : 'tab'}" data-id="${x.select ?? x.tab}"><span class="adv-dot" aria-hidden="true"></span><span class="adv-text">${esc(x.text)}</span><span class="adv-link">${esc(x.link)} →</span></button></li>`).join('')}</ol>`
+    ? `<ol class="adv-list">${items.map((x) => `<li><button class="adv-item ${x.tone}" data-act="${x.select ? 'select' : x.famFilter ? 'adv-fam' : 'tab'}" data-id="${x.select ?? x.famFilter ?? x.tab}"><span class="adv-dot" aria-hidden="true"></span><span class="adv-text">${esc(x.text)}</span><span class="adv-link">${esc(x.link)} →</span></button></li>`).join('')}</ol>`
     : `<p class="note">Rien ne presse cette semaine. C'est le moment de construire, de recruter ou de préparer un coup.</p>`;
   return `
   <div class="advisor ${ui.advisorOpen ? '' : 'closed'}">
@@ -373,7 +379,7 @@ function mapView() {
     })
     .join('');
   const legend = [
-    `<span><i style="background:var(--player)"></i>${CA.inCareer(s) ? 'Ton quartier' : esc(s.familyName)}</span>`,
+    `<span><i style="background:var(--player)"></i>${esc(s.familyName)}</span>`,
     ...CT.rivalsIn(s, ui.city).filter((r) => r.alive).map((r) => `<span><i style="background:${r.color}"></i>${esc(r.name)}${r.alliance ? ' (allié)' : r.war ? ' (guerre)' : ''}</span>`),
     `<span><i style="background:var(--neutral)"></i>Indépendants</span>`,
   ].join('');
@@ -403,10 +409,6 @@ function mapView() {
 function cityStatus(id: string) {
   const all = CT.cityDistricts(s, id).length;
   const mine = CT.ownedIn(s, id).length;
-  if (CA.inCareer(s)) {
-    const fam = CT.cityDistricts(s, id).filter((d) => d.owner === CA.EMPLOYER_ID).length;
-    return id === 'corrano' ? `la ${esc(s.familyName)} tient ${fam + mine} quartier${fam + mine > 1 ? 's' : ''} sur ${all}${mine ? `, dont ${mine} à toi` : ''}` : 'hors de portée tant que tu n’es pas Don';
-  }
   if (!CT.isOpen(s, id)) return 'la famille n’y est pas implantée';
   const h = CT.holder(s, id);
   const gov = CT.governor(s, id);
@@ -416,7 +418,7 @@ function cityStatus(id: string) {
 function cityTabs() {
   return `<div class="city-tabs" role="tablist" aria-label="Villes">${CITIES.map((c) => {
     const open = CT.isOpen(s, c.id);
-    const mine = CA.inCareer(s) ? CT.cityDistricts(s, c.id).filter((d) => d.owner === 'player' || d.owner === CA.EMPLOYER_ID).length : CT.ownedIn(s, c.id).length;
+    const mine = CT.ownedIn(s, c.id).length;
     const don = CT.donCity(s) === c.id;
     const warn = open && !CT.holder(s, c.id);
     return `<button class="city-tab ${ui.city === c.id ? 'active' : ''} ${open ? 'open' : 'closed'}" role="tab" aria-selected="${ui.city === c.id}" data-act="city" data-id="${c.id}">
@@ -443,7 +445,6 @@ function weekCard() {
           ${row(`Ventes d'alcool (${crates} caisses)`, p.booze, 'dirty')}
           ${row('Tripots, paris, entrées des bars', p.fixed, 'dirty')}
           ${row('Salaires', -f.salDirty, 'dirty')}
-          ${row(`Tribut au Don (${Math.round((s.career?.kickup ?? 0.3) * 100)} %)`, -f.tribute, 'dirty')}
           ${row('Envoyé au blanchiment', -f.launderTaken, 'dirty')}
           <span class="total">Bilan</span><span class="num total ${f.dirtyNet < 0 ? 'danger' : 'dirty'}">${sign(f.dirtyNet)}</span>
         </div>
@@ -533,13 +534,10 @@ function heatBlock(always: boolean) {
 
 function tabs() {
   const injured = s.members.filter((m) => m.status !== 'actif').length;
-  const career = CA.inCareer(s);
-  const r = CA.careerRank(s);
   const items0: [Tab, string, string][] = [
     ['quartier', 'Quartier', ''],
-    ['missions', 'Missions', career ? String(s.career!.missions.length) : ''],
-    ['relations', career ? 'Relations' : 'Cercle', career ? (s.career!.dying ? '!' : '') : s.circle && donOf(s) && !CI.heirTally(s).wins ? '!' : ''],
-    ['don', career ? 'Toi' : s.regency ? 'Régence' : donOf(s)?.sex === 'f' ? 'La Donna' : 'Le Don', donOf(s)?.points ? `+${donOf(s)!.points}` : s.spouse?.pregnantWeeks ? '♥' : ''],
+    ['relations', 'Cercle', s.circle && donOf(s) && !CI.heirTally(s).wins ? '!' : ''],
+    ['don', s.regency ? 'Régence' : donOf(s)?.sex === 'f' ? 'La Donna' : 'Le Don', donOf(s)?.points ? `+${donOf(s)!.points}` : s.spouse?.pregnantWeeks ? '♥' : ''],
     ['business', 'Alcool', salesPlan(s).shortage ? '!' : ''],
     ['coups', 'Coups', `${s.jobs.length}${s.heist ? '+1' : ''}${activeVendettas(s).length ? ' !' : ''}`],
     ['famille', 'Famille', `${activeMembers(s).length}${injured ? `+${injured}` : ''}`],
@@ -549,11 +547,9 @@ function tabs() {
     ['rivaux', 'Rivaux', s.rivals.some((r) => r.war) ? 'guerre' : ''],
     ['journal', 'Journal', ''],
   ];
-  const hide = new Set<Tab>(career ? ['villes', 'commission'] : s.circle ? ['missions'] : ['missions', 'relations']);
-  if (career && r === 'associe') hide.add('famille');
-  if (career && (r === 'associe' || r === 'soldat')) { hide.add('business'); hide.add('rivaux'); }
-  const items = items0.filter(([id]) => !hide.has(id)).map(([id, l, c]): [Tab, string, string] => [id, career && id === 'coups' ? 'Combines' : career && id === 'famille' ? 'Équipe' : l, c]);
-  if (hide.has(ui.tab)) ui.tab = career ? 'missions' : 'quartier';
+  const hide = new Set<Tab>(s.circle ? [] : ['relations']);
+  const items = items0.filter(([id]) => !hide.has(id));
+  if (hide.has(ui.tab)) ui.tab = 'quartier';
   return `<nav class="tabs" role="tablist">${items
     .map(([id, label, count]) => `<button class="tab ${ui.tab === id ? 'active' : ''}" role="tab" aria-selected="${ui.tab === id}" data-act="tab" data-id="${id}">${label}${count ? `<span class="count">${count}</span>` : ''}</button>`)
     .join('')}</nav>`;
@@ -562,8 +558,7 @@ function tabs() {
 function panel() {
   switch (ui.tab) {
     case 'quartier': return districtPanel(district(s, ui.selected));
-    case 'missions': return missionsPanel();
-    case 'relations': return relationsPanel();
+    case 'relations': return circlePanel();
     case 'don': return donPanel();
     case 'business': return businessPanel();
     case 'coups': return jobsPanel();
@@ -715,6 +710,7 @@ function attackPanel(d: District) {
   return `
     <h4>Établissements à saisir</h4>${businessList(d, false)}
     <h4>Préparer un assaut</h4>
+    <div class="team-line"><span class="muted">${ids.length} homme${ids.length > 1 ? 's' : ''} choisi${ids.length > 1 ? 's' : ''}</span><button class="btn small primary" data-act="best-attack" data-id="${d.id}" ${avail.length ? '' : 'disabled'}>Meilleure équipe</button>${ids.length ? `<button class="btn small" data-act="clear-attack">Vider</button>` : ''}</div>
     ${avail.length ? avail.map((m) => {
       const tired = (m.fatigue ?? 0) > 0;
       return `
@@ -835,7 +831,7 @@ function jobsPanel() {
   return `
     ${head}
     <h3>Les coups de la semaine · ${esc(CT.cityName(jobCity))}</h3>
-    <p class="flavor">Les opportunités viennent au Don, dans la ville où il se trouve ; une vendetta se règle dans la ville du tueur. Seuls tes hommes présents sur place peuvent participer. La force ou la discrétion décide ; des frères d'armes dans la même équipe se battent mieux (+1 par paire), des rivaux moins bien (−2). Les hommes engagés ne gardent pas leur quartier cette semaine.</p>
+    <p class="flavor">Les opportunités viennent au Don, dans la ville où il se trouve ; une vendetta se règle dans la ville du tueur. Seuls tes hommes présents sur place peuvent participer. La force ou la discrétion décide. Chaque coup cherche un spécialiste : un homme qui a le bon trait apporte +${SPECIALIST_BONUS}. Des frères d'armes dans la même équipe se battent mieux (+1 par paire), des rivaux moins bien (−2). « Meilleure équipe » choisit pour toi parmi les hommes libres ; tu peux retoucher ensuite.</p>
     ${s.jobs.map((j) => {
       const avail = activeMembers(s).filter((m) => CT.memberCity(m) === (j.city ?? 'corrano') && !(s.heist && s.heist.stage > 0 && s.heist.team.includes(m.id)));
       const skill = teamSkill(s, j);
@@ -850,16 +846,24 @@ function jobsPanel() {
           <span>Butin : ${rewardText(j)}</span>
           <span>Si ça rate : <span class="danger">+${j.failHeat} heat</span>, ${j.danger >= 0.5 ? 'gros risque' : j.danger >= 0.35 ? 'risque' : 'petit risque'} de ${j.stat === 'discretion' ? 'prison' : 'blessures'}${r && j.relationHit ? ` · relation avec ${esc(r.name)} −${j.relationHit}` : ''}</span>
         </div>
+        ${jobExtras(j)}
+        <div class="team-line">
+          <span class="team-names">${j.team.length ? j.team.map((id) => s.members.find((m) => m.id === id)).filter((m): m is Member => !!m).map((m) => `<span class="tchip">${m.isDon ? '★ ' : ''}${esc(m.nickname)}${j.specialist && has(m, j.specialist) ? ' ✓' : ''}</span>`).join('') : '<span class="muted">Personne pour l’instant.</span>'}</span>
+          <button class="btn small primary" data-act="best-job" data-id="${j.id}" ${avail.length ? '' : 'disabled'}>Meilleure équipe</button>
+          ${j.team.length ? `<button class="btn small" data-act="clear-job" data-id="${j.id}">Vider</button>` : ''}
+        </div>
+        <details class="pick" ${ui.jobOpen.has(j.id) ? 'open' : ''} data-job-details="${j.id}"><summary>Choisir à la main · ${avail.filter((m) => !(m.fatigue ?? 0)).length} disponibles à ${esc(CT.cityName(j.city))}</summary>
         <div class="team">
           ${avail.length ? '' : `<p class="empty">Aucun homme à ${esc(CT.cityName(j.city))}.</p>`}
-          ${avail.map((m) => {
+          ${[...avail].sort((a, b) => Number(!!(j.specialist && has(b, j.specialist))) - Number(!!(j.specialist && has(a, j.specialist))) || (j.stat === 'force' ? b.force - a.force : b.discretion - a.discretion)).map((m) => {
             const tired = (m.fatigue ?? 0) > 0;
             const inThis = j.team.includes(m.id);
             const stat = j.stat === 'force' ? m.force : m.discretion;
+            const spec = j.specialist && has(m, j.specialist);
             return `<label class="check"><input type="checkbox" data-act="job-pick" data-job="${j.id}" data-id="${m.id}" ${inThis ? 'checked' : ''} ${tired ? 'disabled' : ''}>
-              <span>${m.isDon ? '<b class="donmark">Le Don</b> ' : ''}${esc(m.nickname)} <span class="muted">· ${j.stat === 'force' ? 'F' : 'D'}${stat}${m.rank === 'capo' ? '+2' : ''}${traitHint(m, j.stat)}${inThis ? '' : ' · ' + busyLabel(m)}</span></span></label>`;
+              <span>${m.isDon ? '<b class="donmark">Le Don</b> ' : ''}${esc(m.nickname)} <span class="muted">· ${j.stat === 'force' ? 'F' : 'D'}${stat}${m.rank === 'capo' ? '+2' : ''}${spec ? ` · <span class="clean">${esc(TRAITS[j.specialist!].name)} +${SPECIALIST_BONUS}</span>` : ''}${traitHint(m, j.stat)}${inThis ? '' : ' · ' + busyLabel(m)}</span></span></label>`;
           }).join('')}
-        </div>
+        </div></details>
         <div class="odds" style="--odds:${j.team.length ? oddsTone(p) : 'var(--line)'}">
           ${j.team.length
             ? missing ? `Il manque ${missing} homme${missing > 1 ? 's' : ''} (minimum ${j.minMen}).`
@@ -883,6 +887,22 @@ function vendettaBlock() {
       <small>A tué ${esc(v.victims.join(', '))}. <span class="${left <= 3 ? 'danger' : ''}">Encore ${left} semaine${left > 1 ? 's' : ''} pour le venger</span>, sinon −4 respect et ses vengeurs perdent 15 de loyauté (certains partent).${avengers.length ? ` Vengeurs (+2 chacun sur le coup) : ${esc(avengers.map((m) => m.nickname).join(', '))}.` : ''}</small>
     </div></div>`;
   }).join('')}<p class="note">Pour venger : descends jusqu'au coup « Vendetta : abattre … » (bordure rouge) dans la liste ci-dessous, et coche au moins 2 hommes présents dans la ville du tueur. Il se joue dimanche soir.</p>`;
+}
+
+/** Spécialiste recherché et rôle du Don sur un coup */
+function jobExtras(j: Job) {
+  const parts: string[] = [];
+  if (j.specialist) {
+    const got = specialistBonus(s, j) > 0;
+    const owned_ = s.members.some((m) => has(m, j.specialist!) && m.status === 'actif');
+    parts.push(`Spécialiste recherché : <b>${esc(TRAITS[j.specialist].name)}</b> <span class="${got ? 'clean' : 'muted'}">${got ? `✓ +${SPECIALIST_BONUS}` : owned_ ? `+${SPECIALIST_BONUS} s'il en est` : 'personne dans la famille'}</span>`);
+  }
+  if (j.donStat) {
+    const don = donOf(s);
+    const b = donStatBonus(s, j);
+    parts.push(`Le Don sur le coup : <b>${DON_STAT_LABEL[j.donStat]}</b> ${b ? `<span class="clean">+${b}</span>` : `<span class="muted">+${Math.floor(((don?.[j.donStat] as number | undefined) ?? 5) / 2)} s'il vient (mais il se fait voir)</span>`}`);
+  }
+  return parts.length ? `<p class="specialist">${parts.join(' · ')}</p>` : '';
 }
 
 function heistBlock() {
@@ -909,7 +929,7 @@ function heistBlock() {
     ${h.stage >= 1 && h.stage <= 2 ? `<div class="build-grid">${Object.entries(HE.GEAR).map(([k, g]) => `<button class="build" data-act="gear" data-id="${k}" ${h.gear.includes(k) || (g.currency === 'clean' ? s.clean : s.dirty + s.clean) < g.cost ? 'disabled' : ''}>
       <b>${esc(g.name)}${h.gear.includes(k) ? ' ✓' : ''}</b><span>${esc(g.desc)}</span><span class="num ${g.currency}">${money(g.cost)} ${g.currency === 'clean' ? 'propre' : ''}</span></button>`).join('')}</div>` : ''}
     <div class="diplo">
-      ${h.stage === 0 ? `<button class="btn primary" data-act="heist-go" ${h.team.length >= h.minMen ? '' : 'disabled'}>Lancer les repérages</button>` : ''}
+      ${h.stage === 0 ? `<button class="btn" data-act="best-heist">Meilleure équipe</button><button class="btn primary" data-act="heist-go" ${h.team.length >= h.minMen ? '' : 'disabled'}>Lancer les repérages</button>` : ''}
       <button class="btn small danger" data-act="heist-abort">${ui.confirm === 'heist-abort' ? 'Confirmer l’annulation' : h.stage ? 'Annuler le coup' : 'Laisser passer'}</button>
     </div>
   </article>`;
@@ -1004,15 +1024,14 @@ function donPanel() {
       </div>
     </div>
     <div class="dstats">${stats}</div>
-    ${CA.inCareer(s) ? `<div class="box-note"><b>Ton personnage.</b> Poigne, Ombre, Verbe et Flair décident de tes missions. Chaque niveau te donne 1 point : une stat ou un talent. Tu gagnes le double d'expérience des autres hommes.</div>` : ''}
-    <div class="box-note" ${CA.inCareer(s) ? 'hidden' : ''}>
+    <div class="box-note">
       <b>Au front.</b> Ajoute le Don à un assaut ou à un coup comme n'importe quel homme : +${2} par homme à ses côtés en assaut (+1 sur un coup), +2 respect si l'assaut réussit. Mais il est vu sur les lieux (+5 heat), peut être blessé, arrêté ou tué. S'il meurt sans héritier, la partie est finie.
     </div>
     <h4>Talents</h4>
     <div class="branches">${branches}</div>
     ${familyBlock()}
     ${dynastyBlock()}
-    ${CA.inCareer(s) ? '' : endingBlock()}`;
+    ${endingBlock()}`;
 }
 
 function familyBlock() {
@@ -1081,8 +1100,10 @@ function dynastyBlock() {
 // ---------- Famille ----------
 function familyPanel() {
   const mine = owned(s);
-  const memberRow = (m: Member) => {
-    const statusTxt = m.status === 'actif' ? '' : `<span class="status">${m.status === 'blessé' ? 'Blessé' : 'En prison'} · ${m.statusWeeks} sem.</span>`;
+  const men = s.members;
+  const where = (m: Member) => (m.status !== 'actif' ? (m.status === 'blessé' ? 'Blessé' : 'En prison') : m.assignment ? district(s, m.assignment).name : 'Réserve');
+  // ---------- fiche détaillée (une ligne dépliée) ----------
+  const detail = (m: Member) => {
     const solid = m.force + m.discretion >= 12 || (m.level ?? 0) >= 3;
     const canPromote = m.rank === 'soldat' && m.loyalty >= 60 && solid && s.dirty >= PROMOTE_COST;
     const missing = m.rank !== 'soldat' ? '' : [
@@ -1093,21 +1114,14 @@ function familyPanel() {
     const lvl = m.level ?? 0;
     const need = xpForNext(lvl);
     const fam = m.isDon || m.isChild;
-    return `
-    <div class="man">
-      <div class="who with-face">${memberPortrait(m, 46)}<div>
-        <b>${esc(m.name)}</b> <span class="nick">« ${esc(m.nickname)} »</span><span class="rank">${m.isDon ? (m.sex === 'f' ? 'La Donna' : 'Le Don') : m.isChild ? `${m.sex === 'f' ? 'Fille' : 'Fils'} du Don · niv. ${lvl}` : `${rankTitle(m)} · niv. ${lvl}`}</span>
+    return `<div class="man-detail">
+      <div class="who with-face">${memberPortrait(m, 64)}<div>
+        <b>${esc(m.name)}</b> <span class="nick">« ${esc(m.nickname)} »</span>
         <div class="xp" role="meter" aria-valuenow="${m.xp ?? 0}" aria-valuemin="0" aria-valuemax="${need}" aria-label="Expérience de ${esc(m.nickname)}" title="${lvl >= 8 ? 'Niveau maximum' : `${m.xp ?? 0}/${need} XP avant le niveau ${lvl + 1}`}"><i style="width:${lvl >= 8 ? 100 : ((m.xp ?? 0) / need) * 100}%"></i></div>
+        <small class="muted">Niveau ${lvl}${lvl < 8 ? ` · ${m.xp ?? 0}/${need} XP` : ''} · salaire ${money(m.salary)} · ${m.weeksServed} semaine${m.weeksServed > 1 ? 's' : ''} dans la famille${m.status !== 'actif' ? ` · <span class="danger">${m.status === 'blessé' ? 'blessé' : 'en prison'} encore ${m.statusWeeks} sem.</span>` : ''}</small>
         ${traitChips(m.traits, true)}
         ${bondChips(m)}
-        <div class="attrs">
-          <span>Force <b>${m.force}</b></span><span>Discrétion <b>${m.discretion}</b></span>
-          <span class="${m.loyalty < 35 ? 'loy-low' : ''}">Loyauté <b>${m.loyalty}</b></span>
-          <span>Salaire <b class="dirty">${money(m.salary)}</b></span>
-        </div>
-        ${statusTxt}${m.status === 'actif' ? `<span class="muted" style="font-size:12px">${busyLabel(m)}</span>` : ''}
       </div></div>
-      <div></div>
       <div class="acts">
         <select data-act="assign-member" data-id="${m.id}" aria-label="Affectation de ${esc(m.nickname)}" ${m.status !== 'actif' ? 'disabled' : ''}>
           <option value="" ${!m.assignment ? 'selected' : ''}>Réserve</option>
@@ -1117,20 +1131,108 @@ function familyPanel() {
           <option value="">À ${esc(CT.cityName(CT.memberCity(m)))}</option>
           ${CT.openCities(s).filter((c) => c.id !== CT.memberCity(m)).map((c) => `<option value="${c.id}">Envoyer à ${esc(c.name)} · ${money(CT.TRAVEL_COST)}</option>`).join('')}
         </select>` : ''}
-        ${fam ? '' : `<button class="btn small" data-act="bonus" data-id="${m.id}" ${s.dirty >= 300 ? '' : 'disabled'}>Prime 300 $</button>`}
+        ${fam ? '' : `<button class="btn small" data-act="bonus" data-id="${m.id}" ${s.dirty >= 300 ? '' : 'disabled'}>Prime 300 $ · loyauté +12</button>`}
         ${m.isDon ? `<button class="btn small" data-act="tab" data-id="don">Fiche du Don</button>` : ''}
-        ${m.rank === 'soldat' ? `<button class="btn small" data-act="promote" data-id="${m.id}" ${canPromote ? '' : 'disabled'}>Faire capo · ${money(PROMOTE_COST)}</button>${missing ? `<span class="muted need">Il manque : ${missing}</span>` : ''}` : ''}
+        ${m.rank === 'soldat' && !fam ? `<button class="btn small" data-act="promote" data-id="${m.id}" ${canPromote ? '' : 'disabled'}>Faire capo · ${money(PROMOTE_COST)}</button>${missing ? `<span class="muted need">Il manque : ${missing}</span>` : ''}` : ''}
         ${m.status === 'prison' ? `<button class="btn small" data-act="free" data-id="${m.id}" ${s.favors ? '' : 'disabled'}>Faire libérer · 1 faveur</button>` : ''}
         ${fam ? '' : `<button class="btn small danger" data-act="fire" data-id="${m.id}">${ui.confirm === `fire-${m.id}` ? 'Confirmer le renvoi' : 'Renvoyer'}</button>`}
       </div>
     </div>`;
   };
-  return `
-    <h3>La famille</h3>
-    <p class="flavor">Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat qu'il utilise le plus ; tous les deux niveaux, un nouveau trait. Un homme mal payé finit par parler : sous 25 de loyauté, il peut trahir.</p>
-    ${s.members.length ? s.members.map(memberRow).join('') : '<p class="empty">Plus personne. Recrute avant que la ville ne l\'apprenne.</p>'}
-    ${CA.inCareer(s) ? `<p class="note">À ton rang (${CA.RANK_LABEL[CA.careerRank(s)]}), tu peux avoir ${CA.CREW_MAX[CA.careerRank(s)]} hommes sous tes ordres. Tu paies leur salaire.</p>` : ''}
-    <h4>Recrues de la semaine <span class="muted">· nouvelle liste chaque lundi</span></h4>
+  // ---------- ligne compacte ----------
+  const row = (m: Member) => {
+    const open = ui.famOpen === m.id;
+    const idle = (m.idle ?? 0) >= E.IDLE_WEEKS;
+    const rank = m.isDon ? (m.sex === 'f' ? 'La Donna' : 'Le Don') : m.isChild ? (m.sex === 'f' ? 'Fille du Don' : 'Fils du Don') : rankTitle(m);
+    return `<li class="mrow ${open ? 'open' : ''} ${m.status !== 'actif' ? 'away' : ''}">
+      <button class="mline" data-act="fam-open" data-id="${m.id}" aria-expanded="${open}">
+        ${memberPortrait(m, 30)}
+        <span class="mname"><b>${esc(m.nickname)}</b><small>${esc(rank)} · niv. ${m.level ?? 0}${traitShort(m)}</small></span>
+        <span class="mnum" title="Force (Poigne)">${m.force}</span>
+        <span class="mnum" title="Discrétion (Ombre)">${m.discretion}</span>
+        <span class="mnum ${m.loyalty < 40 ? 'danger' : m.loyalty >= 70 ? 'clean' : ''}" title="Loyauté">${m.loyalty}</span>
+        <span class="mpost ${m.status !== 'actif' ? 'danger' : ''}">${esc(where(m))}${idle ? ` <span class="idle">inactif ${m.idle} sem.</span>` : ''}</span>
+        <span class="mchev" aria-hidden="true">${open ? '▴' : '▾'}</span>
+      </button>
+      ${open ? detail(m) : ''}
+    </li>`;
+  };
+  const head = `<li class="mhead" aria-hidden="true"><span></span><span>Homme</span><span title="Force">For.</span><span title="Discrétion">Dis.</span><span title="Loyauté">Loy.</span><span>Poste</span><span></span></li>`;
+
+  // ---------- filtres et tri ----------
+  const f = ui.famFilter;
+  const quick: [string, string, (m: Member) => boolean][] = [
+    ['all', 'Tous', () => true],
+    ['dispo', 'En réserve', (m) => m.status === 'actif' && !m.assignment && !m.isChild && !m.isDon],
+    ['risque', 'À risque', (m) => !m.isDon && !m.isChild && m.loyalty < 40],
+    ['fideles', 'Fidèles', (m) => !m.isDon && m.loyalty >= 70],
+    ['inactifs', 'Inactifs', (m) => (m.idle ?? 0) >= E.IDLE_WEEKS],
+    ['capos', 'Capos', (m) => m.rank === 'capo' && !m.isDon],
+    ['absents', 'Blessés et prison', (m) => m.status !== 'actif'],
+  ];
+  const traitIds = [...new Set(men.flatMap((m) => m.traits ?? []))].sort((a, b) => TRAITS[a].name.localeCompare(TRAITS[b].name));
+  const test = (m: Member) => {
+    if (f.startsWith('d:')) return m.assignment === f.slice(2);
+    if (f.startsWith('c:')) return CT.memberCity(m) === f.slice(2);
+    if (f.startsWith('t:')) return (m.traits ?? []).includes(f.slice(2) as TraitId);
+    return (quick.find((q) => q[0] === f) ?? quick[0])[2](m);
+  };
+  const sorters: Record<string, (a: Member, b: Member) => number> = {
+    loyalty: (a, b) => a.loyalty - b.loyalty,
+    force: (a, b) => b.force - a.force,
+    discretion: (a, b) => b.discretion - a.discretion,
+    level: (a, b) => (b.level ?? 0) - (a.level ?? 0),
+    salary: (a, b) => b.salary - a.salary,
+    idle: (a, b) => (b.idle ?? 0) - (a.idle ?? 0),
+  };
+  const list = men.filter(test).sort((a, b) => Number(!!b.isDon) - Number(!!a.isDon) || sorters[ui.famSort](a, b));
+  const count = (fn: (m: Member) => boolean) => men.filter(fn).length;
+  const filters = `<div class="fam-tools">
+    <div class="chips">${quick.map(([id, label, fn]) => `<button class="chipbtn ${f === id ? 'on' : ''}" data-act="fam-filter" data-id="${id}" aria-pressed="${f === id}">${label} <small>${count(fn)}</small></button>`).join('')}</div>
+    <div class="selects">
+      <select data-act="fam-where" aria-label="Filtrer par quartier, ville ou trait">
+        <option value="">Quartier, ville, trait…</option>
+        <optgroup label="Quartier">${mine.map((d) => `<option value="d:${d.id}" ${f === `d:${d.id}` ? 'selected' : ''}>${esc(d.name)} (${count((m) => m.assignment === d.id)})</option>`).join('')}</optgroup>
+        ${CT.openCities(s).length > 1 ? `<optgroup label="Ville">${CT.openCities(s).map((c) => `<option value="c:${c.id}" ${f === `c:${c.id}` ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
+        <optgroup label="Trait">${traitIds.map((t) => `<option value="t:${t}" ${f === `t:${t}` ? 'selected' : ''}>${esc(TRAITS[t].name)} (${count((m) => (m.traits ?? []).includes(t))})</option>`).join('')}</optgroup>
+      </select>
+      <select data-act="fam-sort" aria-label="Trier">
+        ${[['loyalty', 'Loyauté (les moins sûrs d’abord)'], ['force', 'Force'], ['discretion', 'Discrétion'], ['level', 'Niveau'], ['salary', 'Salaire'], ['idle', 'Inactivité']].map(([k, l]) => `<option value="${k}" ${ui.famSort === k ? 'selected' : ''}>Trier : ${l}</option>`).join('')}
+      </select>
+      <label class="check"><input type="checkbox" data-act="fam-group" ${ui.famGroup ? 'checked' : ''}><span>Par quartier</span></label>
+    </div>
+  </div>`;
+
+  // ---------- regroupement par quartier ----------
+  let body: string;
+  if (!list.length) body = '<p class="empty">Personne ne correspond à ce filtre.</p>';
+  else if (ui.famGroup) {
+    const groups: { key: string; title: string; sub: string; men: Member[] }[] = [];
+    for (const d of mine) {
+      const g = list.filter((m) => m.assignment === d.id && m.status === 'actif');
+      if (g.length) groups.push({ key: d.id, title: d.name, sub: `défense ${defenseOf(s, d)}${CT.openCities(s).length > 1 ? ` · ${CT.cityName(CT.cityOf(d))}` : ''}`, men: g });
+    }
+    const reserve = list.filter((m) => !m.assignment && m.status === 'actif');
+    if (reserve.length) groups.push({ key: 'reserve', title: 'Réserve', sub: 'disponibles pour les coups et les assauts', men: reserve });
+    const away = list.filter((m) => m.status !== 'actif');
+    if (away.length) groups.push({ key: 'away', title: 'Absents', sub: 'blessés et prisonniers', men: away });
+    body = groups.map((g) => `<details class="mgroup" ${ui.famClosed.has(g.key) ? '' : 'open'} data-group="${g.key}">
+      <summary><b>${esc(g.title)}</b> <span class="muted">· ${g.men.length} homme${g.men.length > 1 ? 's' : ''} · ${g.sub}</span></summary>
+      <ul class="mlist">${head}${g.men.map(row).join('')}</ul></details>`).join('');
+  } else body = `<ul class="mlist">${head}${list.map(row).join('')}</ul>`;
+
+  // ---------- sous-onglets ----------
+  const bonds = (s.bonds ?? []).filter((b) => men.some((m) => m.id === b.a) && men.some((m) => m.id === b.b));
+  const sub = `<div class="subtabs" role="tablist">
+    ${([['hommes', `Hommes <small>${men.length}</small>`], ['recrues', `Recrutement <small>${s.recruits.length}</small>`], ['liens', `Liens <small>${bonds.length}</small>`]] as const)
+      .map(([id, l]) => `<button class="subtab ${ui.famView === id ? 'on' : ''}" role="tab" aria-selected="${ui.famView === id}" data-act="fam-view" data-id="${id}">${l}</button>`).join('')}
+  </div>`;
+  const payroll = men.reduce((t, m) => t + m.salary, 0);
+  const summary = `<div class="facts"><span>Hommes <b>${men.length}</b></span><span>En réserve <b>${count((m) => m.status === 'actif' && !m.assignment && !m.isChild && !m.isDon)}</b></span><span>À risque <b class="${count((m) => !m.isDon && !m.isChild && m.loyalty < 40) ? 'danger' : ''}">${count((m) => !m.isDon && !m.isChild && m.loyalty < 40)}</b></span><span>Salaires <b class="dirty">${money(payroll)}</b>/sem.</span></div>`;
+
+  if (ui.famView === 'recrues') {
+    return `<h3>La famille</h3>${sub}
+    <p class="flavor">Quatre recrues chaque lundi. Les traits comptent : certains coups cherchent un spécialiste.</p>
     <div class="rows">${s.recruits.map((r) => {
       const cost = recruitCost(s, r);
       return `
@@ -1138,8 +1240,30 @@ function familyPanel() {
         <small>Force ${r.force} · Discrétion ${r.discretion} · Loyauté ${r.loyalty} · Salaire ${money(r.salary)}</small>
         ${traitChips(r.traits, true)}</div>
         <button class="btn small" data-act="hire" data-id="${r.id}" ${s.dirty + s.clean >= cost ? '' : 'disabled'} title="Payé en sale d'abord, puis en propre">Recruter ${money(cost)}${cost < r.cost ? ' (recruteur)' : ''}</button></div>`;
-    }).join('')}
+    }).join('') || '<p class="empty">Plus de recrue cette semaine.</p>'}
     </div>`;
+  }
+  if (ui.famView === 'liens') {
+    const name = (id: number) => { const m = men.find((x) => x.id === id)!; return `<button class="linkish" data-act="fam-goto" data-id="${m.id}">${esc(m.nickname)}</button>`; };
+    const fr = bonds.filter((b) => b.kind === 'freres');
+    const ri = bonds.filter((b) => b.kind === 'rivaux');
+    const near = Object.entries(s.bondPts ?? {}).filter(([, v]) => v >= BD.FRERES_AT - 1).map(([k]) => k.split('-').map(Number)).filter(([a, b]) => men.some((m) => m.id === a) && men.some((m) => m.id === b));
+    return `<h3>La famille</h3>${sub}
+    <p class="flavor">Trois opérations ensemble font des frères d'armes : +${BD.FRERES_BONUS} par paire dans une même équipe. Une promotion ou une bagarre crée des rivaux : −${BD.RIVAUX_MALUS} par paire dans une équipe, et −1 de loyauté par semaine s'ils gardent le même quartier.</p>
+    <h4>Frères d'armes (${fr.length})</h4>
+    ${fr.length ? `<ul class="bondlist">${fr.map((b) => `<li class="clean">${name(b.a)} et ${name(b.b)} <small class="muted">depuis la semaine ${b.since}</small></li>`).join('')}</ul>` : '<p class="note">Aucun pour l’instant.</p>'}
+    ${near.length ? `<p class="note">Presque frères (encore une opération ensemble) : ${near.map(([a, b]) => `${name(a)} et ${name(b)}`).join(' · ')}</p>` : ''}
+    <h4>Rivaux (${ri.length})</h4>
+    ${ri.length ? `<ul class="bondlist">${ri.map((b) => { const ma = men.find((m) => m.id === b.a)!; const mb = men.find((m) => m.id === b.b)!; const same = ma.assignment && ma.assignment === mb.assignment; return `<li class="danger">${name(b.a)} et ${name(b.b)}${same ? ' <small>· même quartier : −1 loyauté chacun par semaine</small>' : ''}</li>`; }).join('')}</ul>` : '<p class="note">Aucun : la famille est unie.</p>'}`;
+  }
+  return `<h3>La famille</h3>${sub}${summary}${filters}${body}
+    <p class="note">Clique sur un homme pour voir sa fiche et agir. Chaque assaut, défense ou coup donne de l'expérience ; sous 25 de loyauté, un homme peut trahir.</p>`;
+}
+
+/** Les traits utiles en abrégé sur la ligne compacte */
+function traitShort(m: Member) {
+  const t = (m.traits ?? []).slice(0, 2).map((id) => TRAITS[id].name);
+  return t.length ? ` · ${t.map(esc).join(', ')}` : '';
 }
 
 
@@ -1274,60 +1398,6 @@ function endingBlock() {
 }
 
 
-// ---------- L'ascension ----------
-function trustMeter(v: number, label = 'Confiance du Don') {
-  return `<div class="mood-meter wide" role="meter" aria-valuenow="${v}" aria-valuemin="0" aria-valuemax="100" aria-label="${label}"><i style="width:${v}%;background:${v < 30 ? 'var(--oxblood-bright)' : v < 60 ? 'var(--brass)' : 'var(--good)'}"></i></div>`;
-}
-
-function missionsPanel() {
-  const c = s.career;
-  if (!c) return '';
-  const p = CA.player(s);
-  const r = c.rank;
-  const pr = CA.PROMOTION[r];
-  const crewPool = activeMembers(s).filter((m) => !m.isDon);
-  const progress = pr ? `
-    <div class="promo">
-      <b>Prochain rang : ${CA.RANK_LABEL[pr.next]}</b>
-      <ul class="checklist">
-        <li class="${c.trust >= pr.trust ? 'done' : ''}">Confiance du Don ${c.trust}/${pr.trust}</li>
-        <li class="${c.missionsDone >= pr.missions ? 'done' : ''}">Missions réussies à ce rang ${c.missionsDone}/${pr.missions}</li>
-        <li class="${s.week >= pr.week ? 'done' : ''}">Semaine ${s.week}/${pr.week}</li>
-      </ul>
-    </div>` : r === 'capo' ? `<div class="promo"><b>Le trône</b><p class="note">Le Don a ${theDonAge()} ans. Sa santé : ${c.donHealth}/100${c.dying ? ' — <span class="danger">il est mourant, la succession approche</span>' : ''}. Quand il partira, les capos et les anciens voteront : prépare tes voix dans l'onglet Relations.</p>${trustMeter(c.donHealth, 'Santé du Don')}</div>` : '';
-  const list = c.missions.map((m) => {
-    const ch = CA.missionChance(s, m);
-    const skill = CA.missionSkill(s, m);
-    const crewOk = CA.missionCrewAllowed(m) && r !== 'associe';
-    return `<article class="job ${m.accepted ? 'staffed' : ''}">
-      <div class="job-head"><b>${esc(m.title)}</b><span class="tag">${CA.STAT_LABEL[m.stat]} · difficulté ${m.difficulty}</span></div>
-      <p>${esc(m.text)}</p>
-      <div class="job-meta">
-        <span>Ordre de ${esc(m.giver)} · ta part : <span class="dirty">${money(m.reward.dirty)}</span> · confiance +${m.reward.trust}${m.reward.respect ? ` · +${m.reward.respect} respect` : ''}</span>
-        <span>Si ça rate : confiance −${m.failTrust}${m.failHeat ? `, <span class="danger">+${m.failHeat} heat</span>` : ''}${m.danger >= 0.3 ? `, risque de ${m.stat === 'force' ? 'blessure' : 'garde à vue'}` : ''}</span>
-      </div>
-      <label class="check"><input type="checkbox" data-act="mission" data-id="${m.id}" ${m.accepted ? 'checked' : ''} ${p?.status !== 'actif' ? 'disabled' : ''}><span><b>Accepter la mission</b> <span class="muted">· refuser coûte 1 de confiance</span></span></label>
-      ${m.accepted && crewOk && crewPool.length ? `<div class="team">${crewPool.map((x) => `<label class="check"><input type="checkbox" data-act="mission-crew" data-job="${m.id}" data-id="${x.id}" ${m.crew.includes(x.id) ? 'checked' : ''}><span>${esc(x.nickname)} <span class="muted">· ${m.stat === 'force' ? 'F' : 'D'}${m.stat === 'force' ? x.force : x.discretion} (compte pour moitié)</span></span></label>`).join('')}</div>` : ''}
-      ${m.accepted && r !== 'capo' ? `<label class="check"><input type="checkbox" data-act="mission-skim" data-id="${m.id}" ${m.skim ? 'checked' : ''}><span>Te servir dans la caisse <span class="muted">· +${Math.round(CA.SKIM_BONUS * 100)} % pour toi, ${pct(CA.skimRisk(s))} d’être découvert (confiance −20, tu perds tout)</span></span></label>` : ''}
-      <div class="odds" style="--odds:${oddsTone(ch)}">Toi${m.crew.length ? ' et tes hommes' : ''} <b class="num">${skill}</b> contre <b class="num">${m.difficulty}</b> · <b style="color:${oddsTone(ch)}">${pct(ch)}</b>${ch < 0.05 ? ` <span class="muted">· hors de portée : il te faudrait au moins ${Math.ceil(m.difficulty * 0.6)} en ${CA.STAT_LABEL[m.stat]}${CA.missionCrewAllowed(m) ? ', ou des hommes avec toi' : ''}</span>` : ''}</div>
-    </article>`;
-  }).join('');
-  const kick = r === 'capo' ? `<div class="launder" role="group" aria-label="Tribut au Don"><span>Tribut au Don <span class="muted">· ta part des revenus du quartier</span></span><span class="seg">
-    ${[[0.2, '20 % · confiance −2/sem.'], [0.3, '30 % · +1'], [0.4, '40 % · +2']].map(([v, l]) => `<button class="btn small ${c.kickup === v ? 'on' : ''}" data-act="kickup" data-id="${v}" aria-pressed="${c.kickup === v}">${l}</button>`).join('')}</span></div>` : '';
-  return `
-    <h3>${CA.RANK_LABEL[r]} de la ${esc(s.familyName)}</h3>
-    <p class="flavor">${r === 'associe' ? `Tu n'es encore personne. ${esc(CA.notable(s, 'mentor')?.name ?? 'Ton capo')} te donne du travail : fais-le bien, et le Don entendra parler de toi.` : r === 'soldat' ? 'Tu es un homme d’honneur. Tes hommes peuvent t’accompagner sur les missions de force et de discrétion.' : 'Tu tiens un quartier pour la famille. Fais-le prospérer, verse ta part, et prépare la succession.'}</p>
-    <div class="aff">Confiance du Don <b>${c.trust}/100</b> ${trustMeter(c.trust)}</div>
-    ${progress}
-    ${kick}
-    <h4>Les missions de la semaine <span class="muted">· ${c.missions.filter((m) => m.accepted).length}/${CA.MAX_MISSIONS} acceptées</span></h4>
-    ${p?.status !== 'actif' ? `<p class="note danger">Tu es ${p?.status === 'prison' ? 'en prison' : 'blessé'} (${p?.statusWeeks} sem.) : pas de mission cette semaine, et pas de pénalité.</p>` : ''}
-    ${list || '<p class="empty">Pas de mission cette semaine.</p>'}
-    <p class="note">Tes stats décident de tout : Poigne pour la force, Ombre pour la discrétion, Verbe pour parler, Flair pour les affaires. Chaque niveau te donne un point à placer (onglet Toi).</p>
-    ${c.history.filter((h) => h.text !== 'indic' && h.text !== 'gendre').length ? `<h4>Ton parcours</h4><ul class="log">${c.history.filter((h) => h.text !== 'indic' && h.text !== 'gendre').map((h) => `<li class="tone-good"><span class="w">S${h.week}</span>${esc(h.text)}</li>`).join('')}</ul>` : ''}`;
-}
-const theDonAge = () => (CA.theDon(s)?.age ?? 66) + Math.floor((s.week - 1) / 6);
-
 function circlePanel() {
   const t = CI.heirTally(s);
   const don = donOf(s);
@@ -1379,65 +1449,6 @@ function circlePanel() {
     ${notables || '<p class="note">Personne.</p>'}
     <h4>Les capos</h4>
     ${capos || '<p class="note">Aucun capo : sans prétendant, l\'héritier sera élu sans vote.</p>'}`;
-}
-
-function relationsPanel() {
-  const c = s.career;
-  if (!c || c.rank === 'don') return circlePanel();
-  const t = CA.successionTally(s);
-  const roleName: Record<string, string> = { don: 'le Don', consigliere: 'consigliere', capo: 'capo', ancien: 'ancien' };
-  const cost = CA.giftCost(s);
-  const rows = c.notables.map((n) => {
-    const voter = t.voters.includes(n);
-    const forMe = n.affinity > (n.rivalPull ?? 25);
-    const vote = n.role === 'don' ? '' : n.favori ? '<span class="danger">ton rival pour la succession</span>' : voter ? (forMe ? '<span class="clean">votera pour toi</span>' : `<span class="muted">votera pour ${esc(t.fav?.name ?? 'un autre')} (il lui faut ${(n.rivalPull ?? 25) + 1} d’affinité)</span>`) : '';
-    const cd = n.lastGift !== undefined && s.week - n.lastGift < 2;
-    return `<div class="person">${portrait({ seed: n.seed, size: 52, age: n.age + Math.floor((s.week - 1) / 6), sex: 'm', rank: n.role === 'don' ? 'boss' : n.role === 'capo' ? 'capo' : 'soldat' })}<div class="grow">
-      <b>${esc(n.name)}</b> <span class="muted">« ${esc(n.nickname)} » · ${roleName[n.role]}${n.id === 'mentor' ? ' · ton mentor' : ''}</span>
-      <div class="aff">Affinité ${n.affinity} ${relationMeterValue(n.affinity)}</div>
-      ${vote ? `<small>${vote}</small>` : ''}
-      ${n.favori ? '' : `<div class="diplo"><button class="btn small" data-act="gift" data-id="${n.id}" ${cd || s.dirty + s.clean < cost ? 'disabled' : ''}>Un cadeau · ${money(cost)}${cd ? ' (attends)' : ''}</button></div>`}
-    </div></div>`;
-  }).join('');
-  return `
-    <h3>La famille ${esc(s.familyName.replace(/^Famille /, ''))}</h3>
-    <p class="flavor">Le Don, son consigliere, les capos et les anciens. Leur affinité décide de ta carrière, et à la mort du Don, ils votent : il te faudra ${t.needed} voix sur ${t.voters.length} contre ${esc(t.fav?.name ?? 'le favori')}. Les cadeaux, les services rendus et un bon mariage font monter l'affinité ; le Verbe la fait monter plus vite.</p>
-    <div class="facts"><span>Voix pour toi aujourd'hui <b>${t.mine.length}/${t.voters.length}</b></span><span>Santé du Don <b>${c.donHealth}/100</b></span>${c.lost ? `<span>Don actuel <b>${esc(c.lost)}</b></span>` : ''}</div>
-    ${powerBlock()}
-    ${rows}`;
-}
-function powerBlock() {
-  const c = s.career!;
-  if (c.rank !== 'capo') return `<p class="note">Une fois capo, trois chemins mèneront au trône : attendre la succession, prendre le pouvoir par la force, ou trahir.</p>`;
-  if (c.plot) {
-    const what = c.plot.kind === 'coup' ? 'Coup d’État' : c.plot.kind === 'feds' ? 'Marché avec les fédéraux' : `Pacte avec ${esc(rival(s, c.plot.rival ?? '')?.name ?? 'un rival')}`;
-    const when = c.plot.week - s.week;
-    return `<div class="promo danger-banner"><b>${what} en cours</b><p class="note">Il se joue ${when <= 0 ? 'dimanche soir' : `dans ${when + 1} semaines`}.</p>
-      ${c.plot.kind !== 'feds' ? '<button class="btn small" data-act="plot-cancel">Renoncer</button>' : ''}</div>`;
-  }
-  const why = CA.plotBlocker(s);
-  const conj = CA.conspirators(s);
-  const coup = CA.coupChance(s);
-  const cands = CA.pactCandidates(s);
-  return `<h4>Prendre le pouvoir</h4>
-  <div class="paths">
-    <article class="job"><div class="job-head"><b>La succession</b><span class="tag">attendre</span></div>
-      <p>Le Don a ${c.donHealth}/100 de santé. À sa mort, il te faudra ${CA.successionTally(s).needed} voix. C'est la voie la plus sûre, et les hommes de la famille te suivront avec plus de loyauté.</p></article>
-    <article class="job"><div class="job-head"><b>Le coup d'État</b><span class="tag">la force</span></div>
-      <p>Tu frappes pendant le dîner de dimanche. Toi, la moitié de la force de tes hommes, et 5 par conjuré (capos et consigliere à 40 d'affinité ou plus) : ${conj.length ? esc(conj.map((n) => n.name).join(', ')) : 'aucun conjuré'}.</p>
-      <div class="odds" style="--odds:${oddsTone(coup)}">Puissance <b class="num">${CA.coupPower(s)}</b> contre la garde du Don <b class="num">${CA.coupDefense(s)}</b> · <b style="color:${oddsTone(coup)}">${pct(coup)}</b></div>
-      <p class="note danger">Si ça rate : 55 % d'être exécuté, sinon tu perds ton quartier et tes galons.</p>
-      <button class="btn small danger" data-act="plot" data-id="coup" ${why ? 'disabled' : ''}>${ui.confirm === 'plot-coup' ? 'Confirmer : frapper dimanche' : 'Préparer le coup'}</button></article>
-    <article class="job"><div class="job-head"><b>Les fédéraux</b><span class="tag">trahison</span></div>
-      <p>Tu livres le Don et ${esc(CA.favori(s)?.name ?? 'son bras droit')} au grand jury. Dans deux semaines, ils tombent, ton dossier repart de zéro, et tu prends la place sans vote.</p>
-      <p class="note danger">Ensuite, chaque semaine, ${Math.round(CA.FEDS_RISK * 1000) / 10} % de risque que la famille l'apprenne : loyauté effondrée et toutes les familles contre toi.</p>
-      <button class="btn small danger" data-act="plot" data-id="feds" ${why ? 'disabled' : ''}>${ui.confirm === 'plot-feds' ? 'Confirmer : rencontrer l’agent' : 'Rencontrer un agent fédéral'}</button></article>
-    <article class="job"><div class="job-head"><b>Une famille rivale</b><span class="tag">trahison</span></div>
-      <p>Une famille de New Corrano qui t'apprécie (relation ≥ 20) élimine le Don pour toi. En échange, tu lui dois un des quartiers hérités et une alliance.</p>
-      ${cands.length ? cands.map((r) => { const ch = CA.rivalPactChance(s, r.id); return `<div class="row"><div class="grow"><span style="color:${r.color}">${esc(r.name)}</span> <span class="muted">· relation ${Math.round(r.relation)}</span><small style="color:${oddsTone(ch)}">${pct(ch)} de réussite</small></div>
-        <button class="btn small danger" data-act="plot" data-id="rival" data-to="${r.id}" ${why ? 'disabled' : ''}>${ui.confirm === `plot-rival-${r.id}` ? 'Confirmer' : 'Sceller le pacte'}</button></div>`; }).join('') : '<p class="empty">Aucune famille ne t’apprécie assez (dîners d’affaires dans l’onglet Rivaux).</p>'}
-      <p class="note danger">Si ça rate : même sort qu'un coup d'État raté, et la famille rivale perd 30 de relation.</p></article>
-  </div>`;
 }
 
 function relationMeterValue(v: number) {
@@ -1544,7 +1555,7 @@ function relationMeter(r: RivalFamily) {
 
 function expeditionBlock() {
   const e = s.expedition;
-  if (!e) return CA.inCareer(s) ? '' : `<p class="note">${EG.expeditionOpen(s) ? 'Ta famille compte : les familles des autres villes peuvent désormais tenter une expédition chez toi, annoncée deux semaines à l’avance.' : 'Tant que ta famille reste modeste (moins de 3 quartiers, ou moins de 7 quartiers et de 35 de respect), les familles des autres villes ne viendront pas te chercher.'}</p>`;
+  if (!e) return `<p class="note">${EG.expeditionOpen(s) ? 'Ta famille compte : les familles des autres villes peuvent désormais tenter une expédition chez toi, annoncée deux semaines à l’avance.' : 'Tant que ta famille reste modeste (moins de 3 quartiers, ou moins de 7 quartiers et de 35 de respect), les familles des autres villes ne viendront pas te chercher.'}</p>`;
   const r = rival(s, e.rivalId);
   const d = district(s, e.target);
   const cost = EG.payoffCost(s);
@@ -1554,7 +1565,6 @@ function expeditionBlock() {
 }
 
 function politicsBlock() {
-  if (CA.inCareer(s)) return '';
   const e = EG.election(s);
   const sen = EG.senatorBlocker(s);
   const gala = EG.galaBlocker(s);
@@ -1580,7 +1590,7 @@ function rivalsPanel() {
     <h3>Les familles</h3>
     ${expeditionBlock()}
     <p class="flavor">Ta force de frappe : <b>${myForce}</b>. Une relation haute les dissuade de t'attaquer ; une guerre double leur agressivité.</p>
-    ${CITIES.map((c) => `<h4>${esc(c.name)}</h4>` + CT.rivalsIn(s, c.id).filter((r) => r.alive || r.id !== CA.EMPLOYER_ID).map((r) => {
+    ${CITIES.map((c) => `<h4>${esc(c.name)}</h4>` + CT.rivalsIn(s, c.id).map((r) => {
       const terr = owned(s, r.id).map((d) => d.name).join(', ');
       if (!r.alive) return `<div class="rival"><div class="rival-name" style="color:${r.color}">${esc(r.name)} <span class="muted">· éliminée</span></div><div class="boss">${esc(r.boss)} a quitté la ville.</div></div>`;
       const cd = r.talkCooldown ? ` (${r.talkCooldown} sem.)` : '';
@@ -1598,7 +1608,7 @@ function rivalsPanel() {
         </div>
         <div class="meter"><i style="width:${clamp((r.strength / max) * 100, 4, 100)}%;background:${r.color}"></i></div>
         ${relationMeter(r)}
-        ${CA.inCareer(s) ? (CA.careerRank(s) === 'capo' && !r.employer ? `<div class="diplo"><button class="btn small" data-act="sitdown" data-id="${r.id}" ${!r.talkCooldown && s.clean >= D.SIT_DOWN_COST && !r.war ? '' : 'disabled'}>Dîner d'affaires · ${money(D.SIT_DOWN_COST)}${cd}</button><span class="muted need">En tant que capo, tu peux seulement nouer des liens.</span></div>` : '') : `<div class="diplo">
+        <div class="diplo">
           ${r.war
             ? `<button class="btn small" data-act="peace" data-id="${r.id}" ${s.clean >= D.PEACE_COST ? '' : 'disabled'}>Négocier la paix · ${money(D.PEACE_COST)} propre</button>`
             : `<button class="btn small" data-act="sitdown" data-id="${r.id}" ${!r.talkCooldown && s.clean >= D.SIT_DOWN_COST ? '' : 'disabled'}>Dîner d'affaires · ${money(D.SIT_DOWN_COST)}${cd}</button>
@@ -1608,7 +1618,7 @@ function rivalsPanel() {
                  ? `<button class="btn small danger" data-act="break" data-id="${r.id}">${ui.confirm === `break-${r.id}` ? 'Confirmer la rupture' : "Rompre l'alliance"}</button>`
                  : `<button class="btn small" data-act="ally" data-id="${r.id}" ${r.relation >= D.ALLIANCE_MIN ? '' : 'disabled'} title="Relation ${D.ALLIANCE_MIN} requise">Proposer une alliance</button>`}
                <button class="btn small danger" data-act="war" data-id="${r.id}">${ui.confirm === `war-${r.id}` ? 'Confirmer la guerre' : 'Déclarer la guerre'}</button>`}
-        </div>`}
+        </div>
       </div>`;
     }).join('')).join('')}`;
 }
@@ -1700,7 +1710,6 @@ function chartsBlock() {
     ${lineChart('heat', 'Heat', h.map((x) => ({ week: x.week, v: x.heat })), int, { min: 0, max: 100, ref: { v: 70, label: 'descentes' } })}
     ${lineChart('dossier', 'Dossier fédéral', h.map((x) => ({ week: x.week, v: x.dossier })), int, { min: 0, max: 100, ref: { v: 70, label: 'danger' } })}
     ${lineChart('respect', 'Respect', h.map((x) => ({ week: x.week, v: x.respect })), int, { min: 0 })}
-    ${CA.inCareer(s) && h.filter((x) => x.trust !== undefined).length >= 2 ? lineChart('trust', 'Confiance du Don', h.filter((x) => x.trust !== undefined).map((x) => ({ week: x.week, v: x.trust! })), int, { min: 0, max: 100 }) : ''}
   </div>`;
 }
 
@@ -1734,39 +1743,25 @@ function modals() {
   }
   if (ui.showIntro && ui.newGame) {
     const st = ui.setup;
-    const o = CA.originDef(st.origin);
     return `<div class="overlay"><div class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="intro-t">
       <h2 id="intro-t">New Corrano</h2>
       <p>La Prohibition a fait de New Corrano une ville d'or et de sang. Les Castellano, les Irlandais de Kilbride, le clan Wolska et la Famille Moretti se partagent les rues. Plus loin, Port Halloran, Mirage Springs et Washburn attendent leur heure.</p>
       ${SC.readBest() ? `<p class="muted">Ton record : ${SC.readBest()} points.</p>` : ''}
-      <div class="launder" role="group" aria-label="Mode"><span>Ta partie</span><span class="seg">
-        <button class="btn small ${st.mode === 'career' ? 'on' : ''}" data-act="setup-mode" data-id="career" aria-pressed="${st.mode === 'career'}">L'ascension</button>
-        <button class="btn small ${st.mode === 'don' ? 'on' : ''}" data-act="setup-mode" data-id="don" aria-pressed="${st.mode === 'don'}">Partie rapide : commencer Don</button></span></div>
-      ${st.mode === 'career' ? `
-        <p class="note">Tu commences tout en bas : associé de la Famille Moretti. Missions, confiance du Don, baptême, un quartier à toi… et un jour, peut-être, le trône.</p>
-        <div class="setup-names">
-          <label>Prénom<input id="first" type="text" value="${esc(st.first)}" maxlength="18"></label>
-          <label>Nom<input id="last" type="text" value="${esc(st.last)}" maxlength="18"></label>
-        </div>
-        <h4>Ton origine</h4>
-        <div class="origins">${CA.ORIGINS.map((x) => `<button class="origin ${x.id === st.origin ? 'on' : ''}" data-act="setup-origin" data-id="${x.id}" aria-pressed="${x.id === st.origin}">
-          <b>${esc(x.name)}</b><span class="muted">« ${esc(x.nickname)} »</span>
-          <small>Poigne ${x.stats.force} · Ombre ${x.stats.discretion} · Verbe ${x.stats.verbe} · Flair ${x.stats.flair}</small>
-          <small class="trait">${esc(TRAITS[x.trait].name)} : ${esc(TRAITS[x.trait].desc)}</small></button>`).join('')}</div>
-        <p class="flavor">${esc(o.desc)}</p>` : `
-        <p class="note">Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy et quatre hommes. Tout est débloqué tout de suite.</p>
-        <label for="fam" class="muted" style="font-size:13px">Nom de ta famille</label>
-        <input id="fam" type="text" value="${esc(s.familyName)}" maxlength="32">`}
+      <p class="note">Ton oncle vient de tomber pour fraude fiscale. Il te laisse Little Sicily, un speakeasy et quatre hommes. À toi de bâtir le reste.</p>
+      <div class="setup-names">
+        <label>Prénom du Don<input id="first" type="text" value="${esc(st.first)}" maxlength="18"></label>
+        <label>Nom de la famille<input id="last" type="text" value="${esc(st.last)}" maxlength="18"></label>
+      </div>
       <div class="launder" role="group" aria-label="Carte"><span>La carte</span><span class="seg">
         <button class="btn small ${st.classic ? '' : 'on'}" data-act="setup-map" data-id="random" aria-pressed="${!st.classic}">Au hasard</button>
         <button class="btn small ${st.classic ? 'on' : ''}" data-act="setup-map" data-id="classic" aria-pressed="${st.classic}">Classique</button></span></div>
-      <div class="actions"><button class="btn primary" data-act="start">${st.mode === 'career' ? 'Frapper à la porte du capo' : 'Prendre la relève'}</button></div>
+      <div class="actions"><button class="btn primary" data-act="start">Prendre la relève</button></div>
     </div></div>`;
   }
   if (ui.showIntro) {
     return `<div class="overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="intro-t">
       <h2 id="intro-t">Les règles</h2>
-      <ul class="rules">${CA.inCareer(s) ? careerRules() : ''}${rulesList()}</ul>
+      <ul class="rules">${rulesList()}</ul>
       <div class="actions"><button class="btn primary" data-act="close-help">Reprendre</button></div>
     </div></div>`;
   }
@@ -1780,13 +1775,6 @@ function modals() {
       </div></div></div>`;
   }
   return '';
-}
-
-function careerRules() {
-  return `
-    <li><b>L'ascension</b> : associé, homme d'honneur, capo, puis Don. Chaque rang demande la confiance du Don, des missions réussies et du temps.</li>
-    <li><b>Missions</b> : ton capo, puis le Don, te donnent 2 ou 3 missions par semaine (2 au plus). Tes stats décident ; te servir dans la caisse rapporte plus, mais gare à l'Ombre.</li>
-    <li><b>Relations</b> : le Don, le consigliere, les capos et les anciens. À la mort du Don, ils votent pour son successeur.</li>`;
 }
 
 function rulesList() {
@@ -1854,6 +1842,31 @@ app.addEventListener('click', (ev) => {
       render();
       if (window.innerWidth <= 900) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
+    case 'adv-fam': ui.tab = 'famille'; ui.famView = 'hommes'; ui.famFilter = id; ui.famGroup = false; render(); if (window.innerWidth <= 900) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return;
+    case 'best-job': {
+      const j = s.jobs.find((x) => x.id === Number(id));
+      if (!j) return;
+      const team = TM.bestJobTeam(s, j);
+      if (!team.length) { toast('Personne de libre pour ce coup.'); return render(); }
+      return run(setJobTeam(s, j.id, team));
+    }
+    case 'clear-job': return run(setJobTeam(s, Number(id), []));
+    case 'best-attack': {
+      const team = TM.bestAttackTeam(s, id);
+      ui.attackers = new Set(team);
+      if (!team.length) toast('Personne de libre pour cet assaut.');
+      return render();
+    }
+    case 'clear-attack': ui.attackers.clear(); return render();
+    case 'best-heist': {
+      if (!s.heist || s.heist.stage > 0) return;
+      s.heist.team = TM.bestHeistTeam(s);
+      return render();
+    }
+    case 'fam-view': ui.famView = id as typeof ui.famView; ui.famOpen = null; return render();
+    case 'fam-filter': ui.famFilter = id; return render();
+    case 'fam-open': ui.famOpen = ui.famOpen === Number(id) ? null : Number(id); return render();
+    case 'fam-goto': ui.famView = 'hommes'; ui.famFilter = 'all'; ui.famOpen = Number(id); render(); document.querySelector('.mrow.open')?.scrollIntoView({ block: 'center' }); return;
     case 'bilan-close':
       ui.bilanSeen = s.week - 1;
       render();
@@ -1965,10 +1978,7 @@ app.addEventListener('click', (ev) => {
     case 'choice': resolveEvent(s, id); return render();
     case 'help': ui.showIntro = true; ui.newGame = false; return render();
     case 'close-help': ui.showIntro = false; return render();
-    case 'setup-mode': readSetup(); ui.setup.mode = id as 'career' | 'don'; return render();
-    case 'setup-origin': readSetup(); ui.setup.origin = id; return render();
     case 'setup-map': readSetup(); ui.setup.classic = id === 'classic'; return render();
-    case 'gift': return run(CA.gift(s, id));
     case 'ci-gift': return run(CI.giftNotable(s, id));
     case 'ci-gift-capo': return run(CI.giftCapo(s, Number(id)));
     case 'ci-present': return run(CI.presentHeir(s));
@@ -1976,26 +1986,14 @@ app.addEventListener('click', (ev) => {
     case 'eg-fund': return run(EG.fundCampaign(s));
     case 'eg-senator': return run(EG.buySenator(s));
     case 'eg-gala': return run(EG.holdGala(s));
-    case 'plot': {
-      const key = id === 'rival' ? `plot-rival-${el.dataset.to}` : `plot-${id}`;
-      if (!confirmed(key)) return;
-      return run(CA.startPlot(s, id as 'coup' | 'feds' | 'rival', el.dataset.to));
-    }
-    case 'plot-cancel': return run(CA.cancelPlot(s));
-    case 'kickup': return run(CA.setKickup(s, Number(id)));
     case 'start': {
       readSetup();
       const st = ui.setup;
-      if (st.mode === 'career') {
-        s = CA.startCareer({ first: st.first || 'Tony', last: st.last || 'Bianchi', origin: st.origin, classic: st.classic });
-        ui.tab = 'missions';
-      } else {
-        const name = (document.getElementById('fam') as HTMLInputElement | null)?.value.trim() || 'Famille Moretti';
-        s = E.startGame(name.startsWith('Famille') ? name : `Famille ${name}`, st.classic);
-        const don = donOf(s);
-        if (don) don.name = `${don.name.split(' ')[0]} ${s.familyName.replace(/^Famille /, '')}`;
-        ui.tab = 'quartier';
-      }
+      const last = (st.last || 'Moretti').replace(/^Famille\s+/i, '');
+      s = E.startGame(`Famille ${last}`, st.classic);
+      const don = donOf(s);
+      if (don) don.name = `${st.first || 'Vittorio'} ${last}`;
+      ui.tab = 'quartier';
       ui.selected = 'sicily'; ui.city = 'corrano'; ui.feed = [];
       ui.shown = { dirty: s.dirty, clean: s.clean, respect: s.respect };
       ui.showIntro = false;
@@ -2024,9 +2022,22 @@ app.addEventListener('click', (ev) => {
   }
 });
 
+// les groupes repliés de l'onglet Famille restent repliés d'un rendu à l'autre
+app.addEventListener('toggle', (ev) => {
+  const d = ev.target as HTMLDetailsElement;
+  const jd = d.dataset?.jobDetails;
+  if (jd) { if (d.open) ui.jobOpen.add(Number(jd)); else ui.jobOpen.delete(Number(jd)); return; }
+  const key = d.dataset?.group;
+  if (!key) return;
+  if (d.open) ui.famClosed.delete(key); else ui.famClosed.add(key);
+}, true);
+
 app.addEventListener('change', (ev) => {
   const el = ev.target as HTMLInputElement | HTMLSelectElement;
   const act = el.dataset.act;
+  if (act === 'fam-sort') { ui.famSort = el.value; render(); return; }
+  if (act === 'fam-where') { ui.famFilter = el.value || 'all'; render(); return; }
+  if (act === 'fam-group') { ui.famGroup = (el as HTMLInputElement).checked; render(); return; }
   if (act === 'pick') {
     const mid = Number(el.dataset.id);
     if ((el as HTMLInputElement).checked) ui.attackers.add(mid);
@@ -2045,12 +2056,6 @@ app.addEventListener('change', (ev) => {
     run(CT.travel(s, Number(el.dataset.id), el.value));
   } else if (act === 'governor') {
     run(CT.setGovernor(s, el.dataset.id!, el.value ? Number(el.value) : null));
-  } else if (act === 'mission') {
-    run(CA.toggleMission(s, Number(el.dataset.id)));
-  } else if (act === 'mission-crew') {
-    run(CA.toggleMissionCrew(s, Number(el.dataset.job), Number(el.dataset.id)));
-  } else if (act === 'mission-skim') {
-    run(CA.toggleSkim(s, Number(el.dataset.id)));
   } else if (act === 'heist-pick') {
     run(HE.toggleHeistMember(s, Number(el.dataset.id)));
   } else if (act === 'exp-pick') {
