@@ -26,12 +26,13 @@ export function addDossier(s: GameState, n: number, label: string, raw = false) 
 /** Évolution hebdomadaire certaine (hors événements de la semaine) */
 export function dossierForecast(s: GameState) {
   const lines: { label: string; value: number }[] = [];
-  if (s.heat >= 90) lines.push({ label: 'Heat extrême : ta ligne est sur écoute', value: 10 });
-  else if (s.heat >= 75) lines.push({ label: 'Heat très haute : les fédéraux s’intéressent à toi', value: 5 });
+  if (s.heat >= 90) lines.push({ label: 'Heat extrême : ta ligne est sur écoute', value: 4 });
+  else if (s.heat >= 75) lines.push({ label: 'Heat très haute : les fédéraux s’intéressent à toi', value: 3 });
   else if (s.heat >= 55) lines.push({ label: 'Heat haute : on parle de toi à Washington', value: 2 });
   else if (s.heat >= 40) lines.push({ label: 'Heat soutenue : un agent ouvre une chemise à ton nom', value: 1 });
-  else if (s.heat < 20) lines.push({ label: 'Heat basse : le dossier prend la poussière', value: -1 });
-  const size = Math.floor(owned(s).length / 3);
+  else if (s.heat < 20) lines.push({ label: 'Heat basse : le dossier prend la poussière', value: -2 });
+  else lines.push({ label: 'Heat modérée : le dossier n’avance plus', value: -1 });
+  const size = Math.floor(owned(s).length / 5);
   if (size) lines.push({ label: `Ton empire attire l'attention (${owned(s).length} quartiers)`, value: size });
   const fake = countOwned(s, 'imprimerie');
   if (fake) lines.push({ label: `Fausse monnaie (${fake} imprimerie${fake > 1 ? 's' : ''})`, value: fake });
@@ -145,7 +146,7 @@ export function resolveTrialEffect(s: GameState, effect: string): boolean {
       s.trial = null;
       s.agentWarned = false;
       if (Math.random() < p) {
-        s.dossier = 40;
+        s.dossier = 20;
         s.respect = clamp(s.respect + 8, 0, 150);
         log(s, 'good', `Acquitté ! Le Don sort libre du tribunal (${Math.round(p * 100)} % de chances).`);
         news(s, 5, 'Le Don acquitté', 'Les jurés n’ont pas été convaincus. Sur les marches du tribunal, le Don salue la foule.');

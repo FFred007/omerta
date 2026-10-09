@@ -292,6 +292,13 @@ function resolveWeek() {
   }, nightMs);
 }
 
+/** Tendance certaine du dossier pour la semaine (hors événements) */
+function dossierTrend() {
+  const n = dossierForecast(s).reduce((t, l) => t + l.value, 0);
+  if (!n) return '';
+  return ` <span class="trend ${n > 0 ? 'danger' : 'clean'}" title="Évolution certaine du dossier cette semaine, hors événements">${n > 0 ? '+' : '−'}${Math.abs(n)}/sem.</span>`;
+}
+
 function topbar() {
   const heatTone = s.heat >= 70 ? 'danger' : '';
   return `
@@ -307,7 +314,7 @@ function topbar() {
       <div class="stat"><span class="k">Caisses</span><span class="v">${stockTotal(s)}<small class="muted">/${storageCap(s)}</small></span></div>
       <div class="stat stat-respect"><span class="k">Respect</span><span class="v">${Math.round(ui.shown.respect)}</span></div>
       <div class="stat"><span class="k">Faveurs</span><span class="v">${s.favors}</span></div>
-      <div class="stat heat dossier" data-act="tab" data-id="corruption" role="button" tabindex="0" title="Dossier fédéral : à 100, le Don est inculpé"><span class="k">Dossier <span class="num ${(s.dossier ?? 0) >= 70 ? 'danger' : ''}">${Math.round(s.dossier ?? 0)}/100</span></span>
+      <div class="stat heat dossier" data-act="tab" data-id="corruption" role="button" tabindex="0" title="Dossier fédéral : à 100, le Don est inculpé"><span class="k">Dossier <span class="num ${(s.dossier ?? 0) >= 70 ? 'danger' : ''}">${Math.round(s.dossier ?? 0)}/100</span>${dossierTrend()}</span>
         <div class="heat-bar fed" role="meter" aria-valuenow="${Math.round(s.dossier ?? 0)}" aria-valuemin="0" aria-valuemax="100" aria-label="Dossier fédéral"><i style="width:${s.dossier ?? 0}%"></i></div>
       </div>
       <div class="stat heat" data-act="tab" data-id="corruption" role="button" tabindex="0" title="Voir le détail de la heat"><span class="k">Heat <span class="num ${heatTone}">${s.heat}/100</span></span>
@@ -529,7 +536,7 @@ function heatBlock(always: boolean) {
         <span class="total">Certain</span><span class="num total ${net > 0 ? 'danger' : 'clean'}">${net > 0 ? '+' : ''}${net}</span>
       </div>
       ${risks.length ? `<h4>Peut s'ajouter dimanche soir</h4><div class="ledger-rows">${risks.map(row).join('')}</div>` : ''}
-      <p class="note">Autres sources possibles : descentes (−8 après coup, mais elles ferment un établissement), commerçants furieux qui te dénoncent (+7), traîtres qui parlent (+18), événements. Une heat haute nourrit le dossier fédéral chaque semaine (+1 dès 40, +2 dès 55, +5 dès 75, +10 dès 90).</p>
+      <p class="note">Autres sources possibles : descentes (−8 après coup, mais elles ferment un établissement), commerçants furieux qui te dénoncent (+7), traîtres qui parlent (+18), événements. Une heat haute nourrit le dossier fédéral chaque semaine (+1 dès 40, +2 dès 55, +3 dès 75, +4 dès 90) ; sous 40, il retombe (−1, et −2 sous 20). La retombée naturelle de la heat grandit avec elle : 4, plus 1 par tranche de 6 au-delà de 30.</p>
       ${lh ? `<h4>Semaine dernière : ${lh.from} → ${lh.to} (${lh.to - lh.from >= 0 ? '+' : ''}${lh.to - lh.from})</h4>
         ${lh.lines ? `<div class="ledger-rows">${lh.lines.map((l) => row({ ...l, sure: true })).join('')}</div>` : ''}
         ${lastLines.length ? `<ul class="log">${lastLines.map((e) => `<li class="tone-${e.tone}">${esc(e.text)}</li>`).join('')}</ul>` : ''}

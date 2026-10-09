@@ -41,6 +41,8 @@ export const JUDGE_MIN_RESPECT = 15;
 export const RIVAL_STRENGTH_COST = 850;
 export const COUNCIL_MIN_RESPECT = 35;
 export const HEAT_DECAY = 4;
+/** Retombée naturelle : 4, plus 1 par tranche de 6 de heat au-delà de 30 (la presse se lasse), calculée sur la heat du début de semaine */
+export const heatDecay = (heat: number) => HEAT_DECAY + Math.round(Math.max(0, heat - 30) / 6);
 export const RECRUITS_PER_WEEK = 4;
 
 // =====================================================================
@@ -232,7 +234,8 @@ export function heatForecast(s: GameState) {
   for (const l of politicsHeatLines(s)) lines.push({ ...l, sure: true });
   const chatter = familyCount(s, 'bavard');
   if (chatter) lines.push({ label: `Bavard${chatter > 1 ? 's' : ''} dans la famille`, value: chatter, sure: true });
-  lines.push({ label: 'Retombée naturelle', value: -HEAT_DECAY, sure: true });
+  const decay = heatDecay(s.heat);
+  lines.push({ label: decay > HEAT_DECAY ? `Retombée naturelle (${HEAT_DECAY}, +${decay - HEAT_DECAY} car la presse se lasse d'une heat haute)` : 'Retombée naturelle', value: -decay, sure: true });
   const after = s.dirty + settle(s).dirtyNet;
   const stash = stashHeat(after, s.respect);
   if (stash) lines.push({ label: `Liquide sale planqué au-delà de ${fmt(stashLimit(s.respect))} (+1 par tranche de 10 000 $)`, value: stash, sure: true });
@@ -302,7 +305,7 @@ export function endTurn(s: GameState): LogEntry[] {
   resolvePlayerAttacks(s, conquered);
   resolveJobs(s);
   heistTick(s);
-  economy(s);
+  economy(s, heatStart);
   resolveShipments(s);
   resolveRaids(s, raidedDistricts);
   marketTick(s);
@@ -521,7 +524,7 @@ export function settle(s: GameState): Settlement {
   };
 }
 
-function economy(s: GameState) {
+function economy(s: GameState, heatStart = s.heat) {
   const p = projection(s);
   const f = settle(s);
   s.dirty += f.dirtyNet;
@@ -559,7 +562,7 @@ function economy(s: GameState) {
   }
 
   // heat
-  let heat = p.heatGain - HEAT_DECAY;
+  let heat = p.heatGain - heatDecay(heatStart);
   const extra = stashHeat(s.dirty, s.respect);
   if (extra) {
     heat += extra;
