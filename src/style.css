@@ -752,3 +752,4 @@ details.pick .team { max-height: 260px; overflow-y: auto; }
 .crew-btns { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 6px; }
 .mgroup > summary .muted { font-size: 12px; }
 .trend { font-family: var(--ledger); font-size: 11px; margin-left: 4px; }
+.contact.vacant { opacity: 0.6; }

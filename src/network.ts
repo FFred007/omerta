@@ -1,7 +1,9 @@
 // Le réseau d'influence : des gens, pas des boutons. Presse, police, justice, politique, communauté, fédéraux.
 import { donHasTalent, donOf } from './don';
-import { chance, clamp, log, news, owned, pick } from './state';
-import type { GameState } from './types';
+import { FIRST_NAMES, LAST_NAMES } from './data';
+import { loyalAdvisor } from './circle';
+import { chance, clamp, log, news, owned, pick, randInt } from './state';
+import type { GameState, PendingEvent } from './types';
 
 type Result = { ok: true } | { ok: false; error: string };
 const ok: Result = { ok: true };
@@ -62,14 +64,53 @@ export const CONTACTS: ContactDef[] = [
 ];
 export const contactDef = (id: ContactId) => CONTACTS.find((c) => c.id === id)!;
 
-export interface ContactState { active: boolean; price: number; lastUse?: number; burned?: boolean; known?: boolean }
+// ---------- Les personnes derrière les postes ----------
+export type Temper = 'venal' | 'prudent' | 'ambitieux' | 'integre';
+export const TEMPERS: Record<Temper, { name: string; desc: string; base: number }> = {
+  venal: { name: 'Vénal', desc: 'facile à acheter, mais de plus en plus gourmand', base: 0.85 },
+  prudent: { name: 'Prudent', desc: 'dur à convaincre, mais deux fois moins exposé aux scandales', base: 0.55 },
+  ambitieux: { name: 'Ambitieux', desc: 'se vend au plus offrant : deux fois plus de risque de double jeu', base: 0.45 },
+  integre: { name: 'Intègre', desc: 'presque impossible à acheter ; s’il refuse, il peut te dénoncer', base: 0.15 },
+};
+export interface Person { name: string; temper: Temper; seed: number; since: number; coerced?: boolean }
+/** Tempérament des premiers titulaires */
+const FIRST_TEMPER: Record<ContactId, Temper> = {
+  reporter: 'venal', redac: 'prudent', capitaine: 'venal', commissaire: 'ambitieux', greffier: 'venal',
+  procureur: 'prudent', maire: 'venal', cure: 'prudent', orphelinat: 'prudent', agent: 'ambitieux',
+};
+/** Titre porté devant le nom des remplaçants */
+const TITLE: Partial<Record<ContactId, string>> = {
+  capitaine: 'Capitaine', commissaire: 'Commissaire', procureur: 'Procureur adjoint', maire: 'Maire', cure: 'Père', agent: 'Agent spécial',
+};
+
+export interface ContactState {
+  active: boolean; // payé
+  price: number;
+  lastUse?: number;
+  burned?: boolean; // ancien format : grillé pour toujours
+  known?: boolean;
+  person?: Person;
+  vacantUntil?: number; // poste vide jusqu'à cette semaine
+  refusedUntil?: number; // a refusé : on ne peut pas le revoir avant
+  turned?: { rivalId: string; since: number }; // double jeu, en secret
+  generation?: number;
+}
 
 export function contactState(s: GameState, id: ContactId): ContactState {
   s.contacts ??= {};
-  return (s.contacts[id] ??= { active: false, price: contactDef(id).retainer });
+  const st = (s.contacts[id] ??= { active: false, price: contactDef(id).retainer });
+  // ancien format : un contact grillé laisse un poste vide, repris bientôt
+  if (st.burned) { st.burned = false; st.active = false; st.person = undefined; st.vacantUntil ??= s.week; }
+  if (!st.person && st.vacantUntil === undefined) st.person = { name: contactDef(id).name, temper: FIRST_TEMPER[id], seed: id.length * 7919, since: 0 };
+  return st;
 }
-export const isActive = (s: GameState, id: ContactId) => !!s.contacts?.[id]?.active;
+/** Payé et fidèle : ses effets s'appliquent */
+export const isActive = (s: GameState, id: ContactId) => !!s.contacts?.[id]?.active && !s.contacts?.[id]?.turned;
+/** Payé (qu'il joue double jeu ou non) : c'est ce que le joueur croit */
+export const isPaid = (s: GameState, id: ContactId) => !!s.contacts?.[id]?.active;
 export const activeContacts = (s: GameState) => CONTACTS.filter((c) => isActive(s, c.id));
+export const paidContacts = (s: GameState) => CONTACTS.filter((c) => isPaid(s, c.id));
+export const holderName = (s: GameState, id: ContactId) => contactState(s, id).person?.name ?? contactDef(id).name;
 
 function introduced(s: GameState, c: ContactDef) {
   if (!c.needs) return true;
@@ -81,7 +122,8 @@ function introduced(s: GameState, c: ContactDef) {
 /** Pourquoi on ne peut pas (encore) recruter ce contact */
 export function blocker(s: GameState, c: ContactDef): string | null {
   const st = contactState(s, c.id);
-  if (st.burned) return 'Grillé : il ne veut plus entendre parler de toi';
+  if (st.vacantUntil !== undefined) return `Poste vacant : un remplaçant arrive dans ${Math.max(1, st.vacantUntil - s.week)} sem.`;
+  if (st.refusedUntil !== undefined && st.refusedUntil > s.week) return `Il a refusé : pas avant ${st.refusedUntil - s.week} sem.`;
   if (s.respect < c.respect) return `Il faut ${c.respect} de respect`;
   if (!introduced(s, c)) {
     const by = c.needs === 'judge' ? 'le juge Halloran' : c.needs === 'councilman' ? 'le conseiller Doyle' : contactDef(c.needs as ContactId).name;
@@ -97,23 +139,73 @@ export function priceOf(s: GameState, id: ContactId) {
   return Math.round(contactState(s, id).price * k);
 }
 
-export function hire(s: GameState, id: ContactId): Result {
+// ---------- Approcher un titulaire ----------
+export type Approach = 'enveloppe' | 'intermediaire' | 'chantage';
+export const APPROACHES: Record<Approach, { name: string; desc: string }> = {
+  enveloppe: { name: 'L’enveloppe', desc: 'une semaine de mensualité d’avance' },
+  intermediaire: { name: 'Par un intermédiaire', desc: 'un de tes contacts fait les présentations : deux semaines d’avance, +25 %' },
+  chantage: { name: 'Le chantage', desc: '2 faveurs, +35 % ; mais un homme contraint trahit plus volontiers' },
+};
+/** Un de tes contacts fidèles peut faire les présentations (même milieu, ou celui qui l'introduit) */
+export function intermediary(s: GameState, id: ContactId): string | null {
   const c = contactDef(id);
-  const b = blocker(s, c);
-  if (b) return fail(b);
+  if (c.needs === 'judge' && s.judge) return 'le juge Halloran';
+  if (c.needs === 'councilman' && s.councilman) return 'le conseiller Doyle';
+  const by = activeContacts(s).find((x) => x.id !== id && (x.milieu === c.milieu || x.id === c.needs));
+  return by ? holderName(s, by.id) : null;
+}
+export function approachChance(s: GameState, id: ContactId, how: Approach) {
+  const p = contactState(s, id).person;
+  if (!p) return 0;
+  const verbe = donOf(s)?.verbe ?? 5;
+  return clamp(TEMPERS[p.temper].base + (verbe - 5) * 0.03 + (how === 'intermediaire' ? 0.25 : how === 'chantage' ? 0.35 : 0), 0.05, 0.95);
+}
+export const approachCost = (s: GameState, id: ContactId, how: Approach) => (how === 'chantage' ? 0 : priceOf(s, id) * (how === 'intermediaire' ? 2 : 1));
+export function approachBlocker(s: GameState, id: ContactId, how: Approach): string | null {
+  const c = contactDef(id);
   const st = contactState(s, id);
-  if (c.retainer === 0) return fail('Pas de mensualité : utilise son action.');
-  st.active = true;
-  st.known = true;
-  log(s, 'good', `${c.name}, ${c.role}, émarge désormais chez toi (${fmt(priceOf(s, id))} propres par semaine).`);
+  if (c.retainer === 0) return 'Pas de mensualité : utilise son action.';
+  if (st.active) return 'Il travaille déjà pour toi.';
+  const b = blocker(s, c);
+  if (b) return b;
+  if (how === 'intermediaire' && !intermediary(s, id)) return 'Aucun de tes contacts ne le connaît.';
+  if (how === 'chantage' && s.favors < 2) return 'Il faut 2 faveurs.';
+  if (s.clean < approachCost(s, id, how)) return `Il faut ${fmt(approachCost(s, id, how))} propres.`;
+  return null;
+}
+export function approach(s: GameState, id: ContactId, how: Approach): Result {
+  const why = approachBlocker(s, id, how);
+  if (why) return fail(why);
+  const c = contactDef(id);
+  const st = contactState(s, id);
+  const p = st.person!;
+  const odds = approachChance(s, id, how);
+  s.clean -= approachCost(s, id, how);
+  if (how === 'chantage') s.favors -= 2;
+  if (chance(odds)) {
+    st.active = true;
+    st.known = true;
+    st.turned = undefined;
+    p.coerced = how === 'chantage';
+    log(s, 'good', `${p.name}, ${c.role}, émarge désormais chez toi (${fmt(priceOf(s, id))} propres par semaine)${how === 'chantage' ? ' : il n’a pas eu le choix' : ''}.`);
+    return ok;
+  }
+  st.refusedUntil = s.week + 4;
+  if (p.temper === 'integre' && chance(0.5)) {
+    s.dossier = clamp((s.dossier ?? 0) + 5, 0, 100);
+    log(s, 'police', `${p.name} refuse, et signale la tentative au parquet fédéral (+5 dossier).`);
+  } else log(s, 'bad', `${p.name} refuse ${how === 'chantage' ? 'de céder au chantage' : 'l’enveloppe'}. Pas avant quatre semaines (${Math.round(odds * 100)} % de chances).`);
   return ok;
 }
+/** Compatibilité (bots, anciens tests) : l'enveloppe */
+export const hire = (s: GameState, id: ContactId) => approach(s, id, 'enveloppe');
 
 export function dismiss(s: GameState, id: ContactId): Result {
   const st = contactState(s, id);
   if (!st.active) return fail('Il ne travaille pas pour toi.');
   st.active = false;
-  log(s, 'neutral', `Tu cesses de payer ${contactDef(id).name}.`);
+  st.turned = undefined;
+  log(s, 'neutral', `Tu cesses de payer ${holderName(s, id)}.`);
   return ok;
 }
 
@@ -122,6 +214,7 @@ export function canUse(s: GameState, id: ContactId) {
   const st = contactState(s, id);
   if (!c.action) return 'Pas d’action';
   if (c.retainer > 0 && !st.active) return 'Il doit d’abord être à ta solde';
+  if (st.turned) return 'Il promet, mais rien ne bouge…';
   if (c.retainer === 0 && blocker(s, c)) return blocker(s, c);
   if (st.lastUse !== undefined && s.week - st.lastUse < c.action.cooldown) return `Disponible dans ${c.action.cooldown - (s.week - st.lastUse)} sem.`;
   if (s.clean < c.action.cost) return `Il faut ${fmt(c.action.cost)} propres`;
@@ -138,7 +231,7 @@ export function useAction(s: GameState, id: ContactId): Result {
   switch (id) {
     case 'reporter':
       s.heat = clamp(s.heat - 8, 0, 100);
-      log(s, 'good', `Eddie Malone fait disparaître l'article de la une (−8 heat).`);
+      log(s, 'good', `${holderName(s, id)} fait disparaître l'article de la une (−8 heat).`);
       break;
     case 'redac': {
       const r = [...s.rivals].filter((x) => x.alive).sort((a, b) => a.relation - b.relation)[0];
@@ -154,7 +247,7 @@ export function useAction(s: GameState, id: ContactId): Result {
       if (m) {
         m.status = 'actif';
         m.statusWeeks = 0;
-        log(s, 'good', `${m.nickname} sort du commissariat sans charges. O'Rourke a égaré le procès-verbal.`);
+        log(s, 'good', `${m.nickname} sort du commissariat sans charges. ${holderName(s, id)} a égaré le procès-verbal.`);
       } else {
         s.clean += c.action!.cost;
         st.lastUse = undefined;
@@ -168,7 +261,7 @@ export function useAction(s: GameState, id: ContactId): Result {
       break;
     case 'cure':
       s.heat = clamp(s.heat - 6, 0, 100);
-      log(s, 'good', 'Le père Anselmo jure devant Dieu que le Don était à la messe (−6 heat).');
+      log(s, 'good', `${holderName(s, id)} jure devant Dieu que le Don était à la messe (−6 heat).`);
       break;
     case 'orphelinat':
       s.heat = clamp(s.heat - 5, 0, 100);
@@ -182,36 +275,138 @@ export function useAction(s: GameState, id: ContactId): Result {
 }
 
 // ---------- Effets passifs (lus par la projection et le moteur) ----------
-export const networkRetainers = (s: GameState) => activeContacts(s).reduce((t, c) => t + priceOf(s, c.id), 0);
-export const networkHeat = (s: GameState) => activeContacts(s).reduce((t, c) => t + (c.heat ?? 0), 0);
-export const networkDossier = (s: GameState) => activeContacts(s).reduce((t, c) => t + (c.dossier ?? 0), 0);
+export const networkRetainers = (s: GameState) => paidContacts(s).reduce((t, c) => t + priceOf(s, c.id), 0);
+/** `believed` : ce que le joueur croit (un contact qui joue double jeu compte encore) */
+export const networkHeat = (s: GameState, believed = false) => (believed ? paidContacts(s) : activeContacts(s)).reduce((t, c) => t + (c.heat ?? 0), 0);
+export const networkDossier = (s: GameState, believed = false) => (believed ? paidContacts(s) : activeContacts(s)).reduce((t, c) => t + (c.dossier ?? 0), 0);
 export const networkRaids = (s: GameState) => activeContacts(s).reduce((t, c) => t * (c.raids ?? 1), 1);
 
-/** Les contacts ont leurs défauts : avidité, scandales, rachat par un rival */
+// ---------- La vie du réseau ----------
+function vacate(s: GameState, id: ContactId, weeks = randInt(2, 4)) {
+  const st = contactState(s, id);
+  st.active = false;
+  st.turned = undefined;
+  st.person = undefined;
+  st.refusedUntil = undefined;
+  st.vacantUntil = s.week + weeks;
+}
+const TEMPER_ODDS: [Temper, number][] = [['venal', 35], ['prudent', 30], ['ambitieux', 20], ['integre', 15]];
+const PRICE_K: Record<Temper, number> = { venal: 1, prudent: 1.1, ambitieux: 1.15, integre: 1.3 };
+/** Un nouveau titulaire prend le poste */
+export function newHolder(s: GameState, id: ContactId, person?: Partial<Person>) {
+  const st = contactState(s, id);
+  const c = contactDef(id);
+  let roll = Math.random() * 100;
+  const temper = person?.temper ?? TEMPER_ODDS.find(([, w]) => (roll -= w) <= 0)![0];
+  const name = person?.name ?? `${TITLE[id] ? TITLE[id] + ' ' : ''}${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`;
+  st.generation = (st.generation ?? 0) + 1;
+  st.person = { name, temper, seed: randInt(1, 1e9), since: s.week };
+  st.price = Math.round(c.retainer * PRICE_K[temper] * (1 + 0.1 * st.generation));
+  st.vacantUntil = undefined;
+  st.refusedUntil = undefined;
+  st.active = false;
+  st.turned = undefined;
+  return st.person;
+}
+
+/** Chaque semaine : gourmandise, scandales, assassinats, mutations, double jeu, remplaçants */
 export function networkTick(s: GameState) {
-  for (const c of activeContacts(s)) {
+  for (const c of CONTACTS) {
+    if (c.retainer === 0) continue;
     const st = contactState(s, c.id);
-    if (chance(0.03)) {
-      st.price = Math.round(st.price * 1.2);
-      log(s, 'money', `${c.name} devient gourmand : il demande désormais ${fmt(priceOf(s, c.id))} par semaine.`);
-    }
-    const scandal = 0.006 * c.exposure * (1 + s.heat / 50) * (donHasTalent(s, 'r_ombre') ? 0.6 : 1);
-    if (chance(scandal)) {
-      st.active = false;
-      st.burned = true;
-      s.heat = clamp(s.heat + 12, 0, 100);
-      s.dossier = clamp((s.dossier ?? 0) + 6, 0, 100);
-      log(s, 'police', `Scandale : ${c.name} est démasqué. Il ne peut plus rien pour toi (+12 heat, +6 dossier).`);
-      news(s, 5, `${c.name} dans la tourmente`, `${c.role} : des enveloppes et un nom qui revient sans cesse, celui d’une famille de Little Sicily.`);
+    // un remplaçant arrive
+    if (st.vacantUntil !== undefined) {
+      if (s.week >= st.vacantUntil) {
+        const p = newHolder(s, c.id);
+        if (st.known) log(s, 'neutral', `${c.role} : ${p.name} prend le poste (${TEMPERS[p.temper].name.toLowerCase()}). À approcher dans l’onglet Réseau.`);
+      }
       continue;
     }
+    if (!st.active) continue;
+    const p = st.person!;
+    if (p.temper === 'venal' && chance(0.06)) {
+      st.price = Math.round(st.price * 1.2);
+      log(s, 'money', `${p.name} devient gourmand : il demande désormais ${fmt(priceOf(s, c.id))} par semaine.`);
+    }
+    const scandal = 0.006 * c.exposure * (1 + s.heat / 50) * (donHasTalent(s, 'r_ombre') ? 0.6 : 1) * (p.temper === 'prudent' ? 0.5 : p.temper === 'integre' ? 1.5 : 1);
+    if (chance(scandal)) {
+      s.heat = clamp(s.heat + 12, 0, 100);
+      s.dossier = clamp((s.dossier ?? 0) + 6, 0, 100);
+      log(s, 'police', `Scandale : ${p.name} est démasqué et quitte son poste (+12 heat, +6 dossier). Quelqu’un d’autre le remplacera.`);
+      news(s, 5, `${p.name} dans la tourmente`, `${c.role} : des enveloppes et un nom qui revient sans cesse, celui d’une famille de Little Sicily.`);
+      vacate(s, c.id);
+      continue;
+    }
+    const war = s.rivals.filter((r) => r.alive && r.war);
+    if (war.length && chance(0.008 * c.exposure)) {
+      const r = pick(war);
+      s.heat = clamp(s.heat + 3, 0, 100);
+      log(s, 'bad', `${p.name} a été abattu devant chez lui. Les hommes de ${r.name} t’envoient un message.`);
+      news(s, 5, `${p.name} assassiné`, `${c.role} retrouvé mort au petit matin. La guerre des gangs franchit une ligne.`);
+      vacate(s, c.id);
+      continue;
+    }
+    if (chance(0.005)) {
+      log(s, 'neutral', `${p.name} est muté loin de New Corrano. Le poste attend son remplaçant.`);
+      vacate(s, c.id);
+      continue;
+    }
+    // double jeu : un rival qui te déteste le rachète, en secret
     const enemy = s.rivals.filter((r) => r.alive && r.relation <= -40);
-    if (enemy.length && chance(0.012)) {
-      const r = pick(enemy);
-      st.active = false;
-      log(s, 'bad', `${c.name} a été racheté par ${r.name}. Il ne répond plus à tes appels.`);
+    if (!st.turned && enemy.length && chance(0.012 * (p.temper === 'ambitieux' ? 2 : 1) * (p.coerced ? 3 : 1))) {
+      st.turned = { rivalId: pick(enemy).id, since: s.week };
+      continue;
+    }
+    // il finit par se trahir
+    if (st.turned && st.turned.since < s.week && !s.pendingEvent && chance(loyalAdvisor(s) ? 0.4 : 0.2)) s.pendingEvent = turnedEvent(s, c.id);
+  }
+  if (owned(s).length === 0) s.contacts = {};
+}
+
+/** Pour les tests et l'interface : un contact joue-t-il double jeu ? */
+export const isTurned = (s: GameState, id: ContactId) => !!s.contacts?.[id]?.turned;
+
+function turnedEvent(s: GameState, id: ContactId): PendingEvent {
+  const st = contactState(s, id);
+  const p = st.person!;
+  const r = s.rivals.find((x) => x.id === st.turned?.rivalId);
+  const weeks = s.week - (st.turned?.since ?? s.week);
+  const back = 3 * priceOf(s, id);
+  return {
+    key: 'net_turned', title: `${p.name} joue double jeu`,
+    text: `${loyalAdvisor(s) ? 'Ton consigliere a fait suivre' : 'On a vu'} ${p.name} dîner avec ${r?.name ?? 'une famille rivale'}. Depuis ${weeks} semaine${weeks > 1 ? 's' : ''}, il prend ton argent et ne fait plus rien pour toi.`,
+    data: { contact: id },
+    choices: [
+      { label: 'Le renvoyer', hint: 'Tu cesses de payer ; il ne voudra plus te voir avant six semaines', effect: 'nt_fire' },
+      { label: 'Le faire disparaître', hint: '+8 heat · 30 % de scandale (+6 dossier) · le poste se libère', effect: 'nt_kill' },
+      { label: 'Doubler sa mise', hint: `${fmt(back)} propres · 60 % qu’il redevienne fidèle (mensualité +50 %), sinon il garde l’argent et part`, effect: 'nt_back', disabled: s.clean < back },
+    ],
+  };
+}
+
+export function resolveNetworkEffect(s: GameState, effect: string, ev: PendingEvent): boolean {
+  if (!effect.startsWith('nt_')) return false;
+  const id = String(ev.data?.contact) as ContactId;
+  const st = contactState(s, id);
+  const name = holderName(s, id);
+  switch (effect) {
+    case 'nt_fire':
+      st.active = false; st.turned = undefined; st.refusedUntil = s.week + 6;
+      log(s, 'neutral', `${name} ne touchera plus un dollar de la famille.`);
+      break;
+    case 'nt_kill':
+      s.heat = clamp(s.heat + 8, 0, 100);
+      if (chance(0.3)) { s.dossier = clamp((s.dossier ?? 0) + 6, 0, 100); log(s, 'police', `On a retrouvé ${name} dans le lac, et les fédéraux font le lien (+8 heat, +6 dossier).`); }
+      else log(s, 'bad', `${name} a disparu. Personne ne pose de questions (+8 heat).`);
+      vacate(s, id, randInt(3, 5));
+      break;
+    case 'nt_back': {
+      const cost = 3 * priceOf(s, id);
+      s.clean -= cost;
+      if (chance(0.6)) { st.turned = undefined; st.price = Math.round(st.price * 1.5); log(s, 'good', `${name} jure qu’on ne l’y reprendra plus. Il coûte plus cher, mais il est de nouveau à toi.`); }
+      else { st.active = false; st.turned = undefined; st.refusedUntil = s.week + 6; log(s, 'bad', `${name} empoche ${fmt(cost)} et disparaît de la circulation.`); }
+      break;
     }
   }
-  // un contact qu'on ne paie plus redevient disponible plus tard, sauf s'il est grillé
-  if (owned(s).length === 0) s.contacts = {};
+  return true;
 }

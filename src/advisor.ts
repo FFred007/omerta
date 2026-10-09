@@ -38,7 +38,7 @@ export function advice(s: GameState): Advice[] {
   // la justice
   if (s.trial) add(100, 'danger', `Le procès fédéral est ouvert : ${pct(acquittalChance(s))} d'acquittement aujourd'hui. Juges, témoins, avocats : c'est maintenant qu'on paie.`, 'corruption', 'Le réseau');
   const dos = s.dossier ?? 0;
-  const dosTrend = dossierForecast(s).reduce((t, l) => t + l.value, 0);
+  const dosTrend = dossierForecast(s, true).reduce((t, l) => t + l.value, 0);
   if (!s.trial && dos >= 70) add(92, 'danger', `Le dossier fédéral est à ${Math.round(dos)}/100. À 100, le Don est inculpé.${dosTrend > 0 ? ` Il gagne ${dosTrend} par semaine.` : ''}`, 'corruption', 'Le réseau');
   else if (!s.trial && dos >= 35 && dosTrend > 0) add(58, 'warn', `Le dossier grossit de ${dosTrend} par semaine (${Math.round(dos)}/100). Fais baisser la heat ou paie un juge avant que ça s'emballe.`, 'corruption', 'Le réseau');
   if (s.heat >= 70) add(86, 'danger', `Heat à ${s.heat} : les descentes vont tomber et le dossier fédéral s'ouvre en grand. Fais profil bas, paie les flics.`, 'corruption', 'Le réseau');

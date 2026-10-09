@@ -378,7 +378,7 @@ export interface GameState {
   regency?: Regency | null;
   generation?: number;
   dynasty?: PastDon[];
-  contacts?: Record<string, { active: boolean; price: number; lastUse?: number; burned?: boolean; known?: boolean }>;
+  contacts?: Record<string, import('./network').ContactState>;
   dossier?: number;
   dossierWeek?: { label: string; value: number }[];
   lastDossier?: { from: number; to: number; lines: { label: string; value: number }[] };

@@ -3,7 +3,7 @@
 import { cityOf, donCity } from './cities';
 import { addDossier } from './dossier';
 import { casualties } from './engine';
-import { contactState, isActive } from './network';
+import { holderName, isActive, isPaid, newHolder } from './network';
 import { tierOf } from './data';
 import { award, chance, clamp, defenseOf, district, log, membersIn, news, owned, pick, rival, satisfaction, winChance } from './state';
 import type { District, GameState, PendingEvent } from './types';
@@ -176,12 +176,14 @@ function electionTick(s: GameState) {
   e.funds = 0;
   e.next = s.week + ELECTION_EVERY;
   if (e.mayor === 'ami') {
+    if (!holderName(s, 'maire').includes(MAYOR_FRIEND)) newHolder(s, 'maire', { name: `Maire ${MAYOR_FRIEND}`, temper: 'venal' });
     log(s, 'good', `Élections municipales : ${MAYOR_FRIEND} est réélu. Il sait ce qu’il te doit (descentes −15 %, −1 heat par semaine).`);
     news(s, 5, `${MAYOR_FRIEND} réélu`, 'Une campagne généreusement financée, des affiches à chaque coin de rue.');
   } else {
     log(s, 'bad', `Élections municipales : ${MAYOR_REFORM}, la réformatrice, l’emporte. Descentes +25 %, +1 heat par semaine jusqu’aux prochaines.`);
     news(s, 5, `${MAYOR_REFORM} élue maire`, '« Je nettoierai cette ville », promet la nouvelle maire.');
-    if (isActive(s, 'maire')) { contactState(s, 'maire').active = false; log(s, 'bad', `Le maire ${MAYOR_FRIEND} quitte l’hôtel de ville : ta mensualité s’arrête.`); }
+    if (isPaid(s, 'maire')) log(s, 'bad', `Le maire ${MAYOR_FRIEND} quitte l’hôtel de ville : ta mensualité s’arrête.`);
+    newHolder(s, 'maire', { name: `Maire ${MAYOR_REFORM}`, temper: 'integre' });
   }
 }
 

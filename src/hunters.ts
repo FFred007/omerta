@@ -2,7 +2,7 @@
 import { donOf } from './don';
 import { DOSSIER_ARREST, addDossier } from './dossier';
 import { BUSINESSES } from './data';
-import { isActive } from './network';
+import { holderName, isActive } from './network';
 import { chance, clamp, fx, log, membersIn, news, owned, randInt } from './state';
 import type { GameState, Hunter, HunterId, PendingEvent } from './types';
 
@@ -54,13 +54,13 @@ export function huntGain(s: GameState, h: Hunter) {
     const wars = s.rivals.filter((r) => r.war).length;
     if (wars) lines.push({ label: 'Guerre des gangs à la une', value: wars });
     if (s.trial) lines.push({ label: 'Procès du Don', value: 2 });
-    if (isActive(s, 'reporter')) lines.push({ label: 'Eddie Malone l’oriente sur de fausses pistes', value: -1 });
+    if (isActive(s, 'reporter')) lines.push({ label: `${holderName(s, 'reporter')} l’oriente sur de fausses pistes`, value: -1 });
     if (isActive(s, 'redac')) lines.push({ label: 'Le rédacteur en chef coupe ses papiers', value: -2 });
   } else {
     lines.push(s.heat >= 20 ? { label: `Heat ${s.heat} : il a des indics`, value: Math.round((s.heat / 20) * 10) / 10 } : { label: 'Heat basse : pas de piste', value: -1 });
     const illegal = owned(s).reduce((t, d) => t + d.businesses.filter((b) => BUSINESSES[b.kind].illegal).length, 0);
     if (illegal >= 4) lines.push({ label: `${illegal} commerces illégaux à surveiller`, value: Math.floor(illegal / 4) });
-    if (isActive(s, 'capitaine')) lines.push({ label: 'Le capitaine O’Rourke lui met des bâtons dans les roues', value: -1 });
+    if (isActive(s, 'capitaine')) lines.push({ label: `${holderName(s, 'capitaine')} lui met des bâtons dans les roues`, value: -1 });
     if (isActive(s, 'commissaire')) lines.push({ label: 'Le commissaire lui refuse des hommes', value: -2 });
     if (isActive(s, 'maire')) lines.push({ label: 'Le maire freine ses mandats', value: -1 });
   }

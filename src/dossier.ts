@@ -2,7 +2,7 @@
 import { politicsDossierLines } from './endgame';
 import { DON_SEEN_HEAT, donHasTalent, donOf } from './don';
 import { succession } from './family';
-import { isActive, networkDossier } from './network';
+import { holderName, isActive, networkDossier } from './network';
 import { clamp, log, news, owned } from './state';
 import { capitalFriends } from './cities';
 import { countOwned } from './buildings';
@@ -24,7 +24,8 @@ export function addDossier(s: GameState, n: number, label: string, raw = false) 
 }
 
 /** Évolution hebdomadaire certaine (hors événements de la semaine) */
-export function dossierForecast(s: GameState) {
+/** `believed` : ce que le joueur croit (un contact qui joue double jeu y figure encore) */
+export function dossierForecast(s: GameState, believed = false) {
   const lines: { label: string; value: number }[] = [];
   if (s.heat >= 90) lines.push({ label: 'Heat extrême : ta ligne est sur écoute', value: 4 });
   else if (s.heat >= 75) lines.push({ label: 'Heat très haute : les fédéraux s’intéressent à toi', value: 3 });
@@ -40,7 +41,7 @@ export function dossierForecast(s: GameState) {
   if (lob) lines.push({ label: 'Tes lobbyistes à Washburn', value: -2 * lob });
   const cap = capitalFriends(s);
   if (cap) lines.push({ label: `Tes amis de Washburn (${cap} quartier${cap > 1 ? 's' : ''})`, value: -cap });
-  const net = networkDossier(s);
+  const net = networkDossier(s, believed);
   if (net) lines.push({ label: 'Ton réseau dans la justice', value: net });
   lines.push(...politicsDossierLines(s));
   return lines.map((l) => ({ ...l, value: halve(s, l.value) }));
@@ -52,7 +53,7 @@ export function dossierTick(s: GameState) {
     if (isActive(s, 'agent') && !s.agentWarned) {
       s.agentWarned = true;
       s.dossier = 85;
-      log(s, 'police', 'L’agent Kessler te prévient : une inculpation était prête. Il a « perdu » la convocation (dossier ramené à 85).');
+      log(s, 'police', `${holderName(s, 'agent')} te prévient : une inculpation était prête. Il a « perdu » la convocation (dossier ramené à 85).`);
       return;
     }
     s.trial = { stage: 0, score: 0 };

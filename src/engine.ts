@@ -18,7 +18,7 @@ import { donHas, familyCount, has } from './traits';
 import { DON_SEEN_HEAT, donHasTalent, launderFee } from './don';
 import { familyTick, offendInLaws, spouseHas, succession } from './family';
 import { donJobHeat, jobFailHeat } from './jobs';
-import { activeContacts, contactState, networkRaids, networkTick } from './network';
+import { activeContacts, contactState, holderName, networkRaids, networkTick, paidContacts } from './network';
 import { DOSSIER_ARREST, DOSSIER_RAT, DOSSIER_SEEN, addDossier, dossierTick, trialEvent } from './dossier';
 import { inCoalition, pressureTick } from './pressure';
 import { fillObjectives, objectivesTick } from './objectives';
@@ -211,7 +211,8 @@ export interface HeatLine { label: string; value: number; sure: boolean }
  * Détail de la heat de la semaine.
  * Les lignes « sûres » reproduisent exactement le calcul de economy() ; les autres sont des risques possibles.
  */
-export function heatForecast(s: GameState) {
+/** `believed` : ce que le joueur croit (un contact qui joue double jeu y figure encore) */
+export function heatForecast(s: GameState, believed = false) {
   const lines: HeatLine[] = [];
   let raw = 0;
   for (const d of owned(s)) {
@@ -230,7 +231,7 @@ export function heatForecast(s: GameState) {
   const rounded = Math.round(raw);
   if (lines.length && rounded !== raw) lines[lines.length - 1].value += rounded - raw;
   if (spouseHas(s, 'pieuse')) lines.push({ label: 'Ta femme, pieuse, rassure le curé', value: -1, sure: true });
-  for (const c of activeContacts(s)) if (c.heat) lines.push({ label: `${c.name} (${c.role})`, value: c.heat, sure: true });
+  for (const c of believed ? paidContacts(s) : activeContacts(s)) if (c.heat) lines.push({ label: `${holderName(s, c.id)} (${c.role})`, value: c.heat, sure: true });
   for (const l of politicsHeatLines(s)) lines.push({ ...l, sure: true });
   const chatter = familyCount(s, 'bavard');
   if (chatter) lines.push({ label: `Bavard${chatter > 1 ? 's' : ''} dans la famille`, value: chatter, sure: true });
@@ -555,7 +556,7 @@ function economy(s: GameState, heatStart = s.heat) {
     owned(s).forEach((d) => (d.bribedCop = false));
     s.judge = false;
     s.councilman = false;
-    for (const c of activeContacts(s)) contactState(s, c.id).active = false;
+    for (const c of paidContacts(s)) contactState(s, c.id).active = false;
     dropSenator(s, 'Le sénateur Whitcombe n’a pas reçu son enveloppe : il ne te connaît plus.');
     s.heat = clamp(s.heat + 8, 0, 100);
     log(s, 'police', "Pas assez d'argent propre pour les enveloppes : flics, juge et élus te lâchent (+8 heat).");

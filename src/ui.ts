@@ -294,7 +294,7 @@ function resolveWeek() {
 
 /** Tendance certaine du dossier pour la semaine (hors événements) */
 function dossierTrend() {
-  const n = dossierForecast(s).reduce((t, l) => t + l.value, 0);
+  const n = dossierForecast(s, true).reduce((t, l) => t + l.value, 0);
   if (!n) return '';
   return ` <span class="trend ${n > 0 ? 'danger' : 'clean'}" title="Évolution certaine du dossier cette semaine, hors événements">${n > 0 ? '+' : '−'}${Math.abs(n)}/sem.</span>`;
 }
@@ -516,7 +516,7 @@ const fmtHeat = (n: number) => {
 
 /** Détail de la heat : ce qui est certain cette semaine, ce qui peut s'ajouter, et ce qui s'est passé la semaine dernière */
 function heatBlock(always: boolean) {
-  const f = E.heatForecast(s);
+  const f = E.heatForecast(s, true);
   const sure = f.lines.filter((l) => l.sure);
   const risks = f.lines.filter((l) => !l.sure);
   const net = Math.round(f.sure);
@@ -1540,7 +1540,7 @@ function relationMeterValue(v: number) {
 // ---------- Corruption ----------
 function dossierBlock() {
   const d = Math.round(s.dossier ?? 0);
-  const fc = dossierForecast(s);
+  const fc = dossierForecast(s, true);
   const net = fc.reduce((a, l) => a + l.value, 0);
   const ld = s.lastDossier;
   const row = (l: { label: string; value: number }) => `<span>${esc(l.label)}</span><span class="num ${l.value > 0 ? 'danger' : 'clean'}">${l.value > 0 ? '+' : ''}${l.value}</span>`;
@@ -1556,17 +1556,29 @@ function dossierBlock() {
 
 function contactRow(c: NET.ContactDef) {
   const st = NET.contactState(s, c.id);
-  const why = NET.blocker(s, c);
+  const p = st.person;
   const price = NET.priceOf(s, c.id);
-  const status = st.burned ? '<span class="danger">Grillé</span>' : st.active ? '<span class="clean">À ta solde</span>' : why ? `<span class="muted">${esc(why)}</span>` : '<span class="muted">Disponible</span>';
+  const vacant = st.vacantUntil !== undefined;
+  const why = NET.blocker(s, c);
+  const status = vacant ? `<span class="muted">un remplaçant dans ${Math.max(1, st.vacantUntil! - s.week)} sem.</span>`
+    : st.active ? '<span class="clean">À ta solde</span>'
+    : st.refusedUntil !== undefined && st.refusedUntil > s.week ? `<span class="danger">A refusé · ${st.refusedUntil - s.week} sem.</span>`
+    : why ? `<span class="muted">${esc(why)}</span>` : '<span class="muted">À approcher</span>';
+  const temper = p && c.retainer ? `<span class="trait ${p.temper === 'integre' ? 'bad' : ''}" title="${esc(NET.TEMPERS[p.temper].desc)}">${NET.TEMPERS[p.temper].name}</span>${p.coerced && st.active ? ' <span class="trait bad" title="Tenu par le chantage : il trahit plus volontiers">Contraint</span>' : ''}` : '';
   const useWhy = c.action ? NET.canUse(s, c.id) : null;
-  return `<div class="person contact ${st.active ? 'on' : ''}">${portrait({ seed: seedOf(c.name), size: 44, age: 35 + (seedOf(c.name) % 25), sex: 'm', rank: 'soldat' })}<div class="grow">
-    <b>${esc(c.name)}</b> <span class="muted">· ${esc(c.role)}</span> · ${status}
-    <small>${esc(c.passive)}${c.retainer ? ` · ${money(price)} propres/sem.` : ''}</small>
+  const approaches = !c.retainer || st.active || vacant ? '' : (['enveloppe', 'intermediaire', 'chantage'] as NET.Approach[]).map((how) => {
+    const block = NET.approachBlocker(s, c.id, how);
+    const odds = NET.approachChance(s, c.id, how);
+    const cost = how === 'chantage' ? '2 faveurs' : money(NET.approachCost(s, c.id, how));
+    const by = how === 'intermediaire' ? NET.intermediary(s, c.id) : null;
+    if (how !== 'enveloppe' && block && /Aucun de tes contacts|faveurs/.test(block)) return '';
+    return `<button class="btn small" data-act="net-approach" data-id="${c.id}" data-how="${how}" ${block ? `disabled title="${esc(block)}"` : `title="${esc(NET.APPROACHES[how].desc)}"`}>${NET.APPROACHES[how].name}${by ? ` (${esc(by)})` : ''} · ${cost} · <b style="color:${oddsTone(odds)}">${pct(odds)}</b></button>`;
+  }).join('');
+  return `<div class="person contact ${st.active ? 'on' : ''} ${vacant ? 'vacant' : ''}">${portrait({ seed: p?.seed ?? seedOf(c.name), size: 44, age: 35 + ((p?.seed ?? seedOf(c.name)) % 25), sex: 'm', rank: 'soldat' })}<div class="grow">
+    <b>${p ? esc(p.name) : 'Poste vacant'}</b> <span class="muted">· ${esc(c.role)}</span> ${temper} · ${status}
+    <small>${esc(c.passive)}${c.retainer && !vacant ? ` · ${money(price)} propres/sem.` : ''}</small>
     <div class="diplo">
-      ${c.retainer ? (st.active
-        ? `<button class="btn small" data-act="net-dismiss" data-id="${c.id}">Arrêter de payer</button>`
-        : `<button class="btn small" data-act="net-hire" data-id="${c.id}" ${why ? 'disabled' : ''}>Le mettre dans ta poche · ${money(price)}/sem.</button>`) : ''}
+      ${c.retainer && st.active ? `<button class="btn small" data-act="net-dismiss" data-id="${c.id}">Arrêter de payer</button>` : approaches}
       ${c.action ? `<button class="btn small" data-act="net-use" data-id="${c.id}" ${useWhy ? 'disabled' : ''} title="${esc(useWhy ?? c.action.desc)}">${esc(c.action.label)} · ${money(c.action.cost)}</button><span class="muted need">${esc(c.action.desc)}${useWhy && useWhy !== why ? ` · <span class="danger">${esc(useWhy)}</span>` : ''}</span>` : ''}
     </div>
   </div></div>`;
@@ -1577,7 +1589,7 @@ function corruptionPanel() {
   const milieux = Object.keys(NET.MILIEUX) as NET.Milieu[];
   return `
     <h3>Le réseau</h3>
-    <p class="flavor">Des gens, pas des boutons. Ils se paient en argent propre chaque semaine, deviennent gourmands, peuvent être démasqués (heat et dossier qui explosent) ou rachetés par un rival qui te déteste. Le Verbe du Don fait baisser leurs tarifs.</p>
+    <p class="flavor">Des gens, pas des boutons. Chaque poste a son titulaire, avec son tempérament : vénal, prudent, ambitieux ou intègre. Pour l'acheter, l'enveloppe, un intermédiaire parmi tes contacts, ou le chantage (des faveurs) ; la chance est affichée, le Verbe du Don l'améliore. Une fois payé, il peut être démasqué (heat et dossier qui explosent), abattu par une famille en guerre, muté… ou racheté en secret par un rival qui te déteste : il prend ton argent et ne fait plus rien, jusqu'à ce que tu le découvres. Un poste vide est repris en quelques semaines par quelqu'un d'autre, qu'il faudra convaincre.</p>
     ${politicsBlock()}
     ${huntersBlock()}
     <h4>Le dossier fédéral (${Math.round(s.dossier ?? 0)}/100)</h4>
@@ -2025,6 +2037,7 @@ app.addEventListener('click', (ev) => {
     case 'abandon': if (confirmed('abandon')) run(F.abandonCourtship(s)); return;
     case 'heir': return run(F.setHeir(s, Number(id)));
     case 'net-hire': return run(NET.hire(s, id as NET.ContactId));
+    case 'net-approach': return run(NET.approach(s, id as NET.ContactId, el.dataset.how as NET.Approach));
     case 'net-dismiss': return run(NET.dismiss(s, id as NET.ContactId));
     case 'net-use': return run(NET.useAction(s, id as NET.ContactId));
     case 'hire': return run(E.hire(s, Number(id)));
