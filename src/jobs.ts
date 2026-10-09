@@ -1,4 +1,5 @@
 // Coups et missions : 3 à 4 opportunités par semaine, une équipe, une chance de réussite exacte
+import { commandForce, commandJail } from './command';
 import { BUSINESSES, GOODS } from './data';
 import {
   activeMembers, award, chance, clamp, fx, log, news, nextId, onHeist, owned, pick, randInt, roll, storageCap, stockTotal, winChance,
@@ -20,7 +21,7 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString('fr-FR')}`;
 export function teamSkill(s: GameState, job: Job, ids = job.team) {
   return s.members
     .filter((m) => ids.includes(m.id))
-    .reduce((t, m) => t + (job.stat === 'force' ? m.force : m.discretion) + (m.rank === 'capo' ? 2 : 0) + traitBonus(m, job.stat), 0)
+    .reduce((t, m) => t + (job.stat === 'force' ? m.force + commandForce(s, m) : m.discretion) + (m.rank === 'capo' ? 2 : 0) + traitBonus(m, job.stat), 0)
     + donMorale(s, ids) + teamBondBonus(s, ids) + avengerBonus(s, job, ids) + specialistBonus(s, job, ids) + donStatBonus(s, job, ids);
 }
 
@@ -347,7 +348,7 @@ export function resolveJobs(s: GameState) {
 function consequences(s: GameState, men: Member[], danger: number, stat: JobStat) {
   for (const m of men) {
     const x = Math.random();
-    const jail = (stat === 'discretion' ? danger * 0.5 : danger * 0.25) * (has(m, 'fantome') ? 0.5 : 1);
+    const jail = (stat === 'discretion' ? danger * 0.5 : danger * 0.25) * (has(m, 'fantome') ? 0.5 : 1) * commandJail(s, m);
     if (x < jail) {
       m.status = 'prison';
       m.statusWeeks = randInt(2, 5);

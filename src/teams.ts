@@ -76,6 +76,19 @@ export function bestAttackTeam(s: GameState, districtId: string): number[] {
   return odds(c) > odds(b) ? c : b;
 }
 
+/** « Envoyer l'équipe de X » sur un coup : la meilleure combinaison parmi son équipe et lui */
+export function crewJobTeam(s: GameState, job: Job, capoId: number | 'garde'): number[] {
+  const city = job.city ?? 'corrano';
+  const pool = activeMembers(s).filter((m) => !m.isDon && !(m.fatigue ?? 0) && !onHeist(s, m.id) && memberCity(m) === city && (m.crew === capoId || m.id === capoId));
+  const spec = job.specialist ? pool.filter((m) => has(m, job.specialist!))[0] : undefined;
+  return greedy(pool, spec ? [spec.id] : [], job.minMen, pool.length, (ids) => teamSkill(s, job, ids), (ids) => jobChance(s, job, ids));
+}
+/** « Envoyer l'équipe de X » à l'assaut : toute l'équipe disponible, lui en tête */
+export function crewAttackTeam(s: GameState, districtId: string, capoId: number | 'garde'): number[] {
+  const d = district(s, districtId);
+  return activeMembers(s).filter((m) => !m.isDon && !(m.fatigue ?? 0) && !onHeist(s, m.id) && memberCity(m) === cityOf(d) && (m.crew === capoId || m.id === capoId)).map((m) => m.id);
+}
+
 export function bestHeistTeam(s: GameState): number[] {
   const h = s.heist;
   if (!h) return [];

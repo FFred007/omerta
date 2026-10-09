@@ -1,4 +1,6 @@
 // Le consigliere : chaque lundi, les trois choses qui pressent le plus, et le bilan de la semaine passée.
+import * as CR from './crews';
+import { GATED, UNLOCK_TEXT, isUnlocked } from './unlocks';
 import * as CT from './cities';
 import * as CI from './circle';
 import * as EG from './endgame';
@@ -26,8 +28,8 @@ export function advisor(s: GameState): { name: string; title: string; seed: numb
   return { name: 'Tommaso Ferri « l’Avvocato »', title: 'le consigliere', seed: 7741, age: 61 };
 }
 
-/** L'onglet du Cercle n'existe qu'avec un cercle */
-const visible = (s: GameState, tab: string) => tab !== 'relations' || !!s.circle;
+/** Seulement les onglets déjà ouverts */
+const visible = (s: GameState, tab: string) => isUnlocked(s, tab) && (tab !== 'relations' || !!s.circle);
 
 export function advice(s: GameState): Advice[] {
   const out: Advice[] = [];
@@ -69,6 +71,9 @@ export function advice(s: GameState): Advice[] {
     if (!CT.holder(s, city.id)) add(74, 'warn', `Personne ne tient ${city.name} : ses revenus baissent de 30 %. Nomme un gouverneur.`, 'villes', 'Les villes');
   }
 
+  // un nouvel onglet s'ouvre
+  for (const t of GATED) if ((s.unlocked ?? {})[t] === s.week) add(57, 'info', `Nouveau : ${UNLOCK_TEXT[t].name}. ${UNLOCK_TEXT[t].text}`, t, UNLOCK_TEXT[t].name);
+
   // les menaces de fin de partie
   {
     if (s.expedition) {
@@ -86,6 +91,11 @@ export function advice(s: GameState): Advice[] {
   // les hommes
   const shaky = activeMembers(s).filter((m) => !m.isDon && m.loyalty < 30 && !(m.grudge && CI.loyalAdvisor(s)));
   if (shaky.length) add(60, 'warn', `${shaky.length === 1 ? `${shaky[0].name} « ${shaky[0].nickname} » n'est plus sûr` : `${shaky.length} hommes ne sont plus sûrs`} (loyauté sous 30). Augmente-les ou écarte-les.`, 'famille', 'La famille');
+  // les équipes
+  const loose = CR.unassigned(s).filter((m) => m.status === 'actif');
+  if (loose.length >= 2 && CR.capos(s).length) add(36, 'info', `${loose.length} hommes n'ont pas d'équipe : personne ne les poste. Range-les sous un capo, ou « Répartir les équipes ».`, 'famille', 'Les équipes');
+  const idleCapo = CR.capos(s).find((c) => c.status === 'actif' && !CR.capoDistricts(s, c.id).length && owned(s).length > 1);
+  if (idleCapo) add(32, 'info', `${idleCapo.nickname} n'est responsable d'aucun quartier : son équipe reste en réserve. Confie-lui un quartier.`, 'famille', 'Les équipes');
   const idle = s.members.filter((m) => (m.idle ?? 0) >= IDLE_WEEKS);
   if (idle.length >= 2) { add(38, 'info', `${idle.length} hommes s'ennuient en réserve depuis un mois. Poste-les dans un quartier ou envoie-les sur un coup, ils sont payés pour ça.`, 'famille', 'Les inactifs'); out[out.length - 1].famFilter = 'inactifs'; }
   const don = donOf(s);

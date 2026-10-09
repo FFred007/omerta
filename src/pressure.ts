@@ -3,6 +3,7 @@ import { donOf } from './don';
 import { killMember } from './engine';
 import { chance, clamp, log, news, pick, randInt, rival, winChance } from './state';
 import { cityName, cityOf, donCity, governor, memberCity } from './cities';
+import { capoLeaves, crewOf } from './crews';
 import type { GameState, Member, PendingEvent } from './types';
 
 export const COALITION_AT = 5; // quartiers à partir desquels les rivaux s'organisent
@@ -10,14 +11,20 @@ export const COALITION_WEEKS = 8;
 
 export const inCoalition = (s: GameState) => (s.coalitionWeeks ?? 0) > 0;
 
-/** Défense du Don face à des tueurs : sa Poigne + ses gardes du corps postés avec lui */
-function bodyguards(s: GameState) {
+/** Défense du Don : sa Poigne, la moitié de la force de sa garde (ou des hommes postés avec lui s'il n'en a pas), +5 avec une planque */
+export function bodyguards(s: GameState) {
   const don = donOf(s);
   if (!don) return 0;
-  const guards = s.members.filter((m) => m.status === 'actif' && !m.isDon && m.assignment === don.assignment);
+  const garde = crewOf(s, 'garde').filter((m) => m.status === 'actif' && memberCity(m) === memberCity(don));
+  const guards = garde.length ? garde : s.members.filter((m) => m.status === 'actif' && !m.isDon && m.assignment === don.assignment);
   const safe = s.districts.find((d) => d.id === don.assignment)?.businesses.some((b) => b.kind === 'planque') ? 5 : 0;
   return don.force + guards.reduce((t, m) => t + m.force, 0) / 2 + safe;
 }
+/** Un capo qui frappe : lui, et la moitié de la force de son équipe */
+export const traitorPower = (s: GameState, m: Member) => m.force + 2 + crewOf(s, m.id).filter((x) => x.status === 'actif').reduce((t, x) => t + x.force, 0) / 2;
+/** Chance que la garde repousse un coup d'État interne */
+export const guardHolds = (s: GameState, m: Member) => winChance(bodyguards(s), traitorPower(s, m));
+export const COUP_TRY = 0.5;
 const killers = (s: GameState, rid: string) => Math.max(6, (rival(s, rid)?.strength ?? 10) * 0.45);
 
 /** Chance que des tueurs fidèles éliminent un gouverneur rebelle */
@@ -65,7 +72,7 @@ export function pressureTick(s: GameState) {
       choices: [
         { label: 'Le faire disparaître', hint: '+3 respect, les autres hommes −5 loyauté', effect: 'pr_amb_kill' },
         { label: 'Le couvrir d’or', hint: '−2 500 sale · sa loyauté +35', effect: 'pr_amb_pay', disabled: s.dirty < 2500 },
-        { label: 'Faire comme si de rien n’était', hint: 'Il pourrait tenter sa chance', effect: 'pr_amb_ignore' },
+        { label: 'Faire comme si de rien n’était', hint: `${Math.round(COUP_TRY * 100)} % qu’il tente sa chance · ta garde le repousserait à ${Math.round(guardHolds(s, m) * 100)} %`, effect: 'pr_amb_ignore' },
       ],
     };
     return;
@@ -131,15 +138,22 @@ export function resolvePressureEffect(s: GameState, effect: string, ev: PendingE
       if (m) { m.loyalty = clamp(m.loyalty + 35, 0, 100); log(s, 'neutral', `${m.nickname} remercie le Don. Pour l'instant.`); }
       break;
     case 'pr_amb_ignore':
-      if (m && don && chance(0.5)) {
-        if (chance(0.35)) {
-          log(s, 'bad', `${m.nickname} a tenté un coup d'État. Le Don est abattu dans sa propre maison.`);
+      if (m && don && chance(COUP_TRY)) {
+        if (chance(guardHolds(s, m))) {
+          log(s, 'good', `${m.nickname} a tenté un coup d'État : la garde du Don l'attendait. Il ne verra pas le jour se lever.`);
+          capoLeaves(s, m, 'prennent la fuite');
+          killMember(s, m, 'a été abattu par la garde du Don');
+          s.respect = clamp(s.respect + 3, 0, 150);
+        } else if (chance(0.5)) {
+          log(s, 'bad', `${m.nickname} a tenté un coup d'État et sa garde n'a pas suffi. Le Don est abattu dans sa propre maison.`);
+          capoLeaves(s, m, 'partent avec lui');
           s.members = s.members.filter((x) => x.id !== m.id);
           killMember(s, don, `a été trahi et abattu par ${m.name}, son propre capo`);
         } else {
           don.status = 'blessé';
           don.statusWeeks = randInt(2, 4);
           don.scars = (don.scars ?? 0) + 1;
+          capoLeaves(s, m, 'partent avec lui');
           s.members = s.members.filter((x) => x.id !== m.id);
           log(s, 'bad', `${m.nickname} a tenté un coup d'État. Le Don s'en sort blessé ; le traître a fui la ville.`);
           news(s, 5, 'Fusillade chez le Don', 'Règlement de comptes interne dans la famille de Little Sicily. Le Don aurait survécu.');

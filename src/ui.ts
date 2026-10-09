@@ -14,6 +14,10 @@ import * as AD from './advisor';
 import * as CI from './circle';
 import * as EG from './endgame';
 import * as TM from './teams';
+import * as UL from './unlocks';
+import * as CR from './crews';
+import * as CMD from './command';
+import * as PR from './pressure';
 import { SLOT_MAX, UPGRADES } from './data';
 import { countUp, dropHerald, playFx, trucks } from './fx';
 import { streetLine } from './street';
@@ -65,7 +69,7 @@ const ui = {
   famView: 'hommes' as 'hommes' | 'recrues' | 'liens',
   famFilter: 'all',
   famSort: 'loyalty',
-  famGroup: false,
+  famGroup: 'equipe' as 'liste' | 'equipe' | 'quartier',
   famOpen: null as number | null,
   famClosed: new Set<string>(),
   bilanSeen: -1, // semaine dont le bilan a été refermé
@@ -77,6 +81,8 @@ const DAY_MS = 2600; // durée d'un jour à vitesse ×1
 
 let s: GameState = load() ?? E.startGame();
 if (s.status === 'playing') CI.initCircle(s);
+if (!s.unlocked) { s.unlocked = {}; UL.unlockTick(s, true); }
+if (s.status === 'playing' && !s.crewsInit) CR.initCrews(s);
 if (s.week === 1 && s.log.length <= 1) { ui.showIntro = true; ui.newGame = true; }
 ui.city = CT.donCity(s);
 if (CT.cityOf(district(s, ui.selected)) !== ui.city) ui.selected = CT.ownedIn(s, ui.city)[0]?.id ?? ui.selected;
@@ -547,9 +553,8 @@ function tabs() {
     ['rivaux', 'Rivaux', s.rivals.some((r) => r.war) ? 'guerre' : ''],
     ['journal', 'Journal', ''],
   ];
-  const hide = new Set<Tab>(s.circle ? [] : ['relations']);
-  const items = items0.filter(([id]) => !hide.has(id));
-  if (hide.has(ui.tab)) ui.tab = 'quartier';
+  const items = items0.filter(([id]) => UL.isUnlocked(s, id)).map(([id, l, c]): [Tab, string, string] => [id, l, UL.isNew(s, id) ? 'nouveau' : c]);
+  if (!UL.isUnlocked(s, ui.tab)) ui.tab = 'quartier';
   return `<nav class="tabs" role="tablist">${items
     .map(([id, label, count]) => `<button class="tab ${ui.tab === id ? 'active' : ''}" role="tab" aria-selected="${ui.tab === id}" data-act="tab" data-id="${id}">${label}${count ? `<span class="count">${count}</span>` : ''}</button>`)
     .join('')}</nav>`;
@@ -675,8 +680,9 @@ function ownDistrict(d: District) {
     <h4>Ouvrir un établissement · ${d.businesses.length}/${d.slots} emplacements ${full ? '<span class="muted">(quartier plein)</span>' : ''}</h4>
     <div class="diplo">${slotBtn}</div>
     ${builds}
+    ${responsibleBlock(d)}
     <h4>Hommes postés ici</h4>
-    ${men.length ? `<div class="rows">${men.map((m) => `<div class="row"><div class="grow">${esc(m.name)} « ${esc(m.nickname)} »${m.rank === 'capo' ? ' <span class="muted">(capo, +20 % revenus)</span>' : ''}<small>Force ${m.force} · Loyauté ${m.loyalty} · ${busyLabel(m)}</small></div>
+    ${men.length ? `<div class="rows">${men.map((m) => `<div class="row"><div class="grow">${esc(m.name)} « ${esc(m.nickname)} »${m.rank === 'capo' ? ' <span class="muted">(capo, +20 % revenus)</span>' : ''}<small>Force ${m.force} · Loyauté ${m.loyalty} · ${esc(CR.crewName(s, m.crew))}${m.pinned ? ' · poste fixé' : ''}</small></div>
       <button class="btn small" data-act="assign" data-id="${m.id}" data-to="">Rappeler</button></div>`).join('')}</div>`
       : `<p class="empty">Personne ne garde ce quartier. Une famille rivale pourrait le prendre facilement.</p>`}
     ${reserve.length ? `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
@@ -688,6 +694,30 @@ function ownDistrict(d: District) {
     <div class="row"><div class="grow">${d.bribedCop ? 'Le sergent du secteur est dans ta poche.' : 'Le sergent du secteur ne te connaît pas encore.'}
       <small>Descentes ×0,3 et heat des commerces illégaux divisée par 2 · ${money(COP_BRIBE)} propre/sem.</small></div>
       <button class="btn small" data-act="cop" data-id="${d.id}">${d.bribedCop ? 'Arrêter de payer' : 'Acheter le sergent'}</button></div>`;
+}
+
+function responsibleBlock(d: District) {
+  const bosses = CR.capos(s).filter((c) => CT.memberCity(c) === CT.cityOf(d));
+  const c = d.capo !== undefined ? s.members.find((x) => x.id === d.capo) : undefined;
+  const k = c ? CMD.commandOf(c) : null;
+  return `<h4>Responsable</h4>
+    <div class="row"><div class="grow">${c ? `${esc(c.name)} « ${esc(c.nickname)} »<small>${k ? `${CMD.COMMANDS[k].name} : ${CMD.COMMANDS[k].desc}` : 'Pas de talent de commandement particulier'} · il poste lui-même ses hommes ici chaque lundi</small>` : `<span class="muted">Aucun capo : seuls la garde du Don et les postes fixés à la main le défendent.</span>`}</div>
+      ${bosses.length ? `<select data-act="district-capo" data-id="${d.id}" aria-label="Capo responsable de ${esc(d.name)}">
+        <option value="">Aucun capo</option>
+        ${bosses.map((b) => `<option value="${b.id}" ${d.capo === b.id ? 'selected' : ''}>${esc(b.nickname)} · ${CR.capoDistricts(s, b.id).length} quartier(s)</option>`).join('')}
+      </select>` : ''}</div>`;
+}
+
+/** Boutons « Envoyer l'équipe de X » */
+function crewButtons(act: string, target: string | number, city: string) {
+  const crews: (number | 'garde')[] = ['garde', ...CR.capos(s).map((c) => c.id)];
+  const btns = crews.map((id) => {
+    const n = s.members.filter((m) => (m.crew === id || m.id === id) && !m.isDon && m.status === 'actif' && !(m.fatigue ?? 0) && CT.memberCity(m) === city).length;
+    if (!n) return '';
+    const label = id === 'garde' ? 'la garde' : `l'équipe ${CR.deNick(s.members.find((m) => m.id === id)!.nickname)}`;
+    return `<button class="btn small" data-act="${act}" data-id="${target}" data-crew="${id}">Envoyer ${esc(label)} (${n})</button>`;
+  }).join('');
+  return btns ? `<div class="crew-btns">${btns}</div>` : '';
 }
 
 function attackPanel(d: District) {
@@ -711,6 +741,7 @@ function attackPanel(d: District) {
     <h4>Établissements à saisir</h4>${businessList(d, false)}
     <h4>Préparer un assaut</h4>
     <div class="team-line"><span class="muted">${ids.length} homme${ids.length > 1 ? 's' : ''} choisi${ids.length > 1 ? 's' : ''}</span><button class="btn small primary" data-act="best-attack" data-id="${d.id}" ${avail.length ? '' : 'disabled'}>Meilleure équipe</button>${ids.length ? `<button class="btn small" data-act="clear-attack">Vider</button>` : ''}</div>
+    ${crewButtons('crew-attack', d.id, CT.cityOf(d))}
     ${avail.length ? avail.map((m) => {
       const tired = (m.fatigue ?? 0) > 0;
       return `
@@ -852,6 +883,7 @@ function jobsPanel() {
           <button class="btn small primary" data-act="best-job" data-id="${j.id}" ${avail.length ? '' : 'disabled'}>Meilleure équipe</button>
           ${j.team.length ? `<button class="btn small" data-act="clear-job" data-id="${j.id}">Vider</button>` : ''}
         </div>
+        ${crewButtons('crew-job', j.id, j.city ?? 'corrano')}
         <details class="pick" ${ui.jobOpen.has(j.id) ? 'open' : ''} data-job-details="${j.id}"><summary>Choisir à la main · ${avail.filter((m) => !(m.fatigue ?? 0)).length} disponibles à ${esc(CT.cityName(j.city))}</summary>
         <div class="team">
           ${avail.length ? '' : `<p class="empty">Aucun homme à ${esc(CT.cityName(j.city))}.</p>`}
@@ -1122,7 +1154,13 @@ function familyPanel() {
         ${traitChips(m.traits, true)}
         ${bondChips(m)}
       </div></div>
+      ${m.rank === 'capo' && !fam ? capoSummary(m) : ''}
       <div class="acts">
+        ${!fam && m.rank !== 'capo' ? `<select data-act="set-crew" data-id="${m.id}" aria-label="Équipe ${esc(CR.deNick(m.nickname))}">
+          <option value="garde" ${m.crew === 'garde' ? 'selected' : ''}>Garde du Don (${CR.crewOf(s, 'garde').length}/${CR.GARDE_MAX})</option>
+          ${CR.capos(s).map((c) => `<option value="${c.id}" ${m.crew === c.id ? 'selected' : ''}>Équipe ${esc(CR.deNick(c.nickname))} (${CR.crewOf(s, c.id).length}/${CR.crewCap(c)})</option>`).join('')}
+          <option value="" ${m.crew === undefined ? 'selected' : ''}>Sans équipe</option>
+        </select>` : ''}
         <select data-act="assign-member" data-id="${m.id}" aria-label="Affectation de ${esc(m.nickname)}" ${m.status !== 'actif' ? 'disabled' : ''}>
           <option value="" ${!m.assignment ? 'selected' : ''}>Réserve</option>
           ${mine.filter((d) => CT.cityOf(d) === CT.memberCity(m)).map((d) => `<option value="${d.id}" ${m.assignment === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}
@@ -1131,6 +1169,7 @@ function familyPanel() {
           <option value="">À ${esc(CT.cityName(CT.memberCity(m)))}</option>
           ${CT.openCities(s).filter((c) => c.id !== CT.memberCity(m)).map((c) => `<option value="${c.id}">Envoyer à ${esc(c.name)} · ${money(CT.TRAVEL_COST)}</option>`).join('')}
         </select>` : ''}
+        ${m.pinned ? `<button class="btn small" data-act="unpin" data-id="${m.id}" title="Son capo (ou la garde) le postera lui-même chaque lundi">Poste fixé · laisser le capo décider</button>` : ''}
         ${fam ? '' : `<button class="btn small" data-act="bonus" data-id="${m.id}" ${s.dirty >= 300 ? '' : 'disabled'}>Prime 300 $ · loyauté +12</button>`}
         ${m.isDon ? `<button class="btn small" data-act="tab" data-id="don">Fiche du Don</button>` : ''}
         ${m.rank === 'soldat' && !fam ? `<button class="btn small" data-act="promote" data-id="${m.id}" ${canPromote ? '' : 'disabled'}>Faire capo · ${money(PROMOTE_COST)}</button>${missing ? `<span class="muted need">Il manque : ${missing}</span>` : ''}` : ''}
@@ -1147,11 +1186,11 @@ function familyPanel() {
     return `<li class="mrow ${open ? 'open' : ''} ${m.status !== 'actif' ? 'away' : ''}">
       <button class="mline" data-act="fam-open" data-id="${m.id}" aria-expanded="${open}">
         ${memberPortrait(m, 30)}
-        <span class="mname"><b>${esc(m.nickname)}</b><small>${esc(rank)} · niv. ${m.level ?? 0}${traitShort(m)}</small></span>
+        <span class="mname"><b>${esc(m.nickname)}</b><small>${esc(rank)} · niv. ${m.level ?? 0}${ui.famGroup !== 'equipe' && !m.isDon && !m.isChild && m.rank !== 'capo' ? ` · ${esc(CR.crewName(s, m.crew).replace('Équipe ', 'éq. '))}` : ''}${traitShort(m)}</small></span>
         <span class="mnum" title="Force (Poigne)">${m.force}</span>
         <span class="mnum" title="Discrétion (Ombre)">${m.discretion}</span>
         <span class="mnum ${m.loyalty < 40 ? 'danger' : m.loyalty >= 70 ? 'clean' : ''}" title="Loyauté">${m.loyalty}</span>
-        <span class="mpost ${m.status !== 'actif' ? 'danger' : ''}">${esc(where(m))}${idle ? ` <span class="idle">inactif ${m.idle} sem.</span>` : ''}</span>
+        <span class="mpost ${m.status !== 'actif' ? 'danger' : ''}">${esc(where(m))}${m.pinned ? ' <small class="muted">(fixé)</small>' : ''}${idle ? ` <span class="idle">inactif ${m.idle} sem.</span>` : ''}</span>
         <span class="mchev" aria-hidden="true">${open ? '▴' : '▾'}</span>
       </button>
       ${open ? detail(m) : ''}
@@ -1199,14 +1238,35 @@ function familyPanel() {
       <select data-act="fam-sort" aria-label="Trier">
         ${[['loyalty', 'Loyauté (les moins sûrs d’abord)'], ['force', 'Force'], ['discretion', 'Discrétion'], ['level', 'Niveau'], ['salary', 'Salaire'], ['idle', 'Inactivité']].map(([k, l]) => `<option value="${k}" ${ui.famSort === k ? 'selected' : ''}>Trier : ${l}</option>`).join('')}
       </select>
-      <label class="check"><input type="checkbox" data-act="fam-group" ${ui.famGroup ? 'checked' : ''}><span>Par quartier</span></label>
+      <select data-act="fam-groupby" aria-label="Affichage">
+        ${[['equipe', 'Par équipe'], ['quartier', 'Par quartier'], ['liste', 'Liste']].map(([k, l]) => `<option value="${k}" ${ui.famGroup === k ? 'selected' : ''}>${l}</option>`).join('')}
+      </select>
     </div>
   </div>`;
 
   // ---------- regroupement par quartier ----------
   let body: string;
   if (!list.length) body = '<p class="empty">Personne ne correspond à ce filtre.</p>';
-  else if (ui.famGroup) {
+  else if (ui.famGroup === 'equipe') {
+    const groups: { key: string; title: string; sub: string; men: Member[] }[] = [];
+    const avgLoy = (ms: Member[]) => (ms.length ? Math.round(ms.reduce((t, m) => t + m.loyalty, 0) / ms.length) : 0);
+    const donM = list.filter((m) => m.isDon || m.isChild);
+    const garde = list.filter((m) => m.crew === 'garde');
+    groups.push({ key: 'garde', title: 'Le Don et sa garde', sub: `${CR.crewOf(s, 'garde').length}/${CR.GARDE_MAX} gardes · protège le Don des tueurs et des traîtres (défense ${Math.round(PR.bodyguards(s))})`, men: [...donM, ...garde] });
+    for (const c of CR.capos(s)) {
+      const crew = CR.crewOf(s, c.id);
+      const k = CMD.commandOf(c);
+      const zone = CR.capoDistricts(s, c.id);
+      const shown = list.filter((m) => m.id === c.id || m.crew === c.id);
+      if (!shown.length) continue;
+      groups.push({ key: `c${c.id}`, title: `Équipe ${CR.deNick(c.nickname)}`, sub: `${crew.length}/${CR.crewCap(c)} hommes · loyauté moyenne ${avgLoy([c, ...crew])}${k ? ` · ${CMD.COMMANDS[k].name} (${CMD.COMMANDS[k].desc})` : ''} · ${zone.length ? `tient ${zone.map((d) => d.name).join(', ')}` : '<span class="danger">aucun quartier : son équipe reste en réserve</span>'}`, men: shown.sort((a, b) => Number(b.id === c.id) - Number(a.id === c.id)) });
+    }
+    const none = list.filter((m) => !m.isDon && !m.isChild && m.rank !== 'capo' && m.crew === undefined);
+    if (none.length) groups.push({ key: 'none', title: 'Sans équipe', sub: 'personne ne les poste : à toi de le faire, ou range-les dans une équipe', men: none });
+    body = groups.map((g) => `<details class="mgroup" ${ui.famClosed.has(g.key) ? '' : 'open'} data-group="${g.key}">
+      <summary><b>${esc(g.title)}</b> <span class="muted">· ${g.sub}</span></summary>
+      <ul class="mlist">${head}${g.men.map(row).join('')}</ul></details>`).join('');
+  } else if (ui.famGroup === 'quartier') {
     const groups: { key: string; title: string; sub: string; men: Member[] }[] = [];
     for (const d of mine) {
       const g = list.filter((m) => m.assignment === d.id && m.status === 'actif');
@@ -1256,8 +1316,22 @@ function familyPanel() {
     <h4>Rivaux (${ri.length})</h4>
     ${ri.length ? `<ul class="bondlist">${ri.map((b) => { const ma = men.find((m) => m.id === b.a)!; const mb = men.find((m) => m.id === b.b)!; const same = ma.assignment && ma.assignment === mb.assignment; return `<li class="danger">${name(b.a)} et ${name(b.b)}${same ? ' <small>· même quartier : −1 loyauté chacun par semaine</small>' : ''}</li>`; }).join('')}</ul>` : '<p class="note">Aucun : la famille est unie.</p>'}`;
   }
-  return `<h3>La famille</h3>${sub}${summary}${filters}${body}
+  const crewBar = `<div class="crew-bar">
+    <button class="btn small" data-act="auto-crews" title="Équipes équilibrées : la garde du Don d'abord, des forces égales, les spécialistes étalés, les frères d'armes ensemble, les rivaux séparés">${ui.confirm === 'auto-crews' ? 'Confirmer : tout redistribuer' : 'Répartir les équipes'}</button>
+    <button class="btn small" data-act="auto-districts">Répartir les quartiers entre les capos</button>
+    <span class="muted">Chaque lundi, chaque capo poste ses hommes dans ses quartiers, les plus exposés d'abord. Un poste choisi à la main reste fixé.</span>
+  </div>`;
+  return `<h3>La famille</h3>${sub}${summary}${crewBar}${filters}${body}
     <p class="note">Clique sur un homme pour voir sa fiche et agir. Chaque assaut, défense ou coup donne de l'expérience ; sous 25 de loyauté, un homme peut trahir.</p>`;
+}
+
+/** Dans la fiche d'un capo : son commandement, son équipe, ses quartiers */
+function capoSummary(c: Member) {
+  const k = CMD.commandOf(c);
+  const zone = CR.capoDistricts(s, c.id);
+  return `<p class="note">Commandement : ${k ? `<b>${CMD.COMMANDS[k].name}</b>, ${CMD.COMMANDS[k].desc}` : 'aucun talent particulier (un capo Brute, Tireur, Négociateur, Comptable, Fantôme ou Fidèle donne un bonus à son équipe)'}.<br>
+    Équipe : ${CR.crewOf(s, c.id).length}/${CR.crewCap(c)} hommes (3, +1 tous les 2 niveaux) · ${zone.length ? `quartiers : ${zone.map((d) => esc(d.name)).join(', ')}` : 'aucun quartier'}.<br>
+    Ses hommes se rapprochent chaque semaine de sa loyauté (${c.loyalty}). S'il trahit, ceux qui sont sous 50 partent avec lui.</p>`;
 }
 
 /** Les traits utiles en abrégé sur la ligne compacte */
@@ -1785,8 +1859,9 @@ function rulesList() {
     <li><b>Commerçants</b> : règle le tarif de protection. Rends-leur service, ils te devront des faveurs.</li>
     <li><b>Argent</b> : le <span class="dirty">sale</span> vient des rackets ; les façades le blanchissent en <span class="clean">propre</span>, qui paie flics, juges et élus.</li>
     <li><b>Heat et dossier fédéral</b> : la heat nourrit le dossier fédéral. À 100, le Don passe en procès. Ton réseau (journalistes, flics, juges) t'aide à tenir.</li>
-    <li><b>Villes</b> : le respect ouvre d'autres villes (le port, la ville du jeu, la capitale). Le Don n'est que dans l'une ; un capo gouverneur tient les autres.</li>
-    <li><b>Commission des Dons</b> : toutes les ${CM.MEETING_EVERY} semaines, les familles votent. Obtiens un siège, achète des voix, deviens Capo dei Capi. Au-delà de ${COALITION_AT} quartiers, elles peuvent te mettre au ban.</li>
+    ${UL.isUnlocked(s, 'villes') ? '' : '<!--'}<li><b>Villes</b> : le respect ouvre d'autres villes (le port, la ville du jeu, la capitale). Le Don n'est que dans l'une ; un capo gouverneur tient les autres.</li>${UL.isUnlocked(s, 'villes') ? '' : '-->'}
+    ${UL.isUnlocked(s, 'commission') ? '' : '<!--'}<li><b>Commission des Dons</b> : toutes les ${CM.MEETING_EVERY} semaines, les familles votent. Obtiens un siège, achète des voix, deviens Capo dei Capi. Au-delà de ${COALITION_AT} quartiers, elles peuvent te mettre au ban.</li>${UL.isUnlocked(s, 'commission') ? '' : '-->'}
+    ${UL.GATED.every((t) => UL.isUnlocked(s, t)) ? '' : "<li class=\"muted\"><b>Et ensuite</b> : d'autres pans du jeu s'ouvriront à mesure que ta famille grandit. Le consigliere te préviendra.</li>"}
     <li><b>La fin, c'est toi qui la choisis</b> : retraite ou légitimité (score ×1,5). Mort ou condamné sans héritier, le score est divisé par deux.</li>`;
 }
 
@@ -1825,6 +1900,12 @@ function confirmed(key: string) {
   return false;
 }
 
+/** Un poste choisi à la main reste fixe : le capo n'y touchera plus */
+function pinned(r: E.ActionResult, memberId: number) {
+  if (r.ok) { const m = s.members.find((x) => x.id === memberId); if (m && m.crew !== undefined) m.pinned = true; }
+  return r;
+}
+
 function run(r: E.ActionResult) {
   if (!r.ok) toast(r.error);
   render();
@@ -1842,7 +1923,7 @@ app.addEventListener('click', (ev) => {
       render();
       if (window.innerWidth <= 900) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
-    case 'adv-fam': ui.tab = 'famille'; ui.famView = 'hommes'; ui.famFilter = id; ui.famGroup = false; render(); if (window.innerWidth <= 900) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return;
+    case 'adv-fam': ui.tab = 'famille'; ui.famView = 'hommes'; ui.famFilter = id; ui.famGroup = 'liste'; render(); if (window.innerWidth <= 900) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return;
     case 'best-job': {
       const j = s.jobs.find((x) => x.id === Number(id));
       if (!j) return;
@@ -1857,6 +1938,22 @@ app.addEventListener('click', (ev) => {
       if (!team.length) toast('Personne de libre pour cet assaut.');
       return render();
     }
+    case 'crew-attack': {
+      const c = el.dataset.crew === 'garde' ? 'garde' : Number(el.dataset.crew);
+      ui.attackers = new Set(TM.crewAttackTeam(s, id, c));
+      return render();
+    }
+    case 'crew-job': {
+      const j = s.jobs.find((x) => x.id === Number(id));
+      if (!j) return;
+      const c = el.dataset.crew === 'garde' ? 'garde' : Number(el.dataset.crew);
+      return run(setJobTeam(s, j.id, TM.crewJobTeam(s, j, c)));
+    }
+    case 'auto-crews':
+      if (!confirmed('auto-crews')) return;
+      CR.autoCrews(s); CR.autoPost(s); toast('Équipes reformées.'); return render();
+    case 'auto-districts': CR.autoDistricts(s); CR.autoPost(s); toast('Quartiers répartis entre les capos.'); return render();
+    case 'unpin': CR.pin(s, Number(id), false); return render();
     case 'clear-attack': ui.attackers.clear(); return render();
     case 'best-heist': {
       if (!s.heist || s.heist.stage > 0) return;
@@ -1877,6 +1974,8 @@ app.addEventListener('click', (ev) => {
       return;
     case 'tab':
       ui.tab = id as Tab;
+      UL.unlockNow(s, id);
+      UL.markSeen(s, id);
       render();
       if (window.innerWidth <= 900 && (el.classList.contains('linkish') || el.classList.contains('adv-item'))) document.querySelector('.panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
@@ -1925,7 +2024,7 @@ app.addEventListener('click', (ev) => {
     case 'fire': if (confirmed(`fire-${id}`)) run(E.fire(s, Number(id))); return;
     case 'promote': return run(E.promote(s, Number(id)));
     case 'bonus': return run(E.payBonus(s, Number(id)));
-    case 'assign': return run(E.assign(s, Number(id), el.dataset.to || null));
+    case 'assign': return run(pinned(E.assign(s, Number(id), el.dataset.to || null), Number(id)));
     case 'attack': {
       const r = E.orderAttack(s, id, [...ui.attackers].filter((x) => !((s.members.find((m) => m.id === x)?.fatigue ?? 0) > 0)));
       if (r.ok) ui.attackers.clear();
@@ -2036,8 +2135,10 @@ app.addEventListener('change', (ev) => {
   const el = ev.target as HTMLInputElement | HTMLSelectElement;
   const act = el.dataset.act;
   if (act === 'fam-sort') { ui.famSort = el.value; render(); return; }
+  if (act === 'set-crew') { const v = el.value; run(CR.setCrew(s, Number(el.dataset.id), v === '' ? undefined : v === 'garde' ? 'garde' : Number(v))); return; }
+  if (act === 'district-capo') { run(CR.setDistrictCapo(s, el.dataset.id!, el.value ? Number(el.value) : undefined)); return; }
+  if (act === 'fam-groupby') { ui.famGroup = el.value as typeof ui.famGroup; render(); return; }
   if (act === 'fam-where') { ui.famFilter = el.value || 'all'; render(); return; }
-  if (act === 'fam-group') { ui.famGroup = (el as HTMLInputElement).checked; render(); return; }
   if (act === 'pick') {
     const mid = Number(el.dataset.id);
     if ((el as HTMLInputElement).checked) ui.attackers.add(mid);
@@ -2049,9 +2150,9 @@ app.addEventListener('change', (ev) => {
     ui.qty[el.dataset.id as Good] = clamp(Math.round(Number(el.value) || 0), 0, 500);
     render();
   } else if (act === 'assign-select' && el.value) {
-    run(E.assign(s, Number(el.value), ui.selected));
+    run(pinned(E.assign(s, Number(el.value), ui.selected), Number(el.value)));
   } else if (act === 'assign-member') {
-    run(E.assign(s, Number(el.dataset.id), el.value || null));
+    run(pinned(E.assign(s, Number(el.dataset.id), el.value || null), Number(el.dataset.id)));
   } else if (act === 'travel' && el.value) {
     run(CT.travel(s, Number(el.dataset.id), el.value));
   } else if (act === 'governor') {

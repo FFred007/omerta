@@ -73,6 +73,8 @@ export interface District {
   unrest?: number;
   /** semaines d'affilée où les commerçants sont à bout (révolte à 3) */
   grievance?: number;
+  /** capo responsable du quartier */
+  capo?: number;
   flavor: string;
   shops: Shop[];
   tariff: Tariff;
@@ -196,6 +198,10 @@ export interface Member {
   lastOp?: number;
   /** semaines d'affilée en réserve sans rien faire */
   idle?: number;
+  /** équipe : id du capo, ou la garde du Don */
+  crew?: number | 'garde';
+  /** poste choisi à la main : le capo n'y touche pas */
+  pinned?: boolean;
 }
 
 export interface Spouse {
@@ -363,6 +369,11 @@ export interface GameState {
   election?: { next: number; funds: number; mayor: 'ami' | 'reformateur' | null };
   senator?: { since: number } | null;
   gala?: { count: number; last?: number };
+  /** onglets débloqués : id → semaine (−1 = déjà ouvert dans une ancienne sauvegarde) */
+  unlocked?: Record<string, number>;
+  seenTabs?: string[];
+  /** les équipes ont été formées une première fois */
+  crewsInit?: boolean;
   lastPresent?: number;
   regency?: Regency | null;
   generation?: number;

@@ -31,6 +31,7 @@ npx vite-node tests/buildings.ts     # bâtiments, améliorations, emplacements,
 npx vite-node tests/circle.ts        # le cercle : vote de l'héritier (prévu = réel), prise du trône par la force
 npx vite-node tests/endgame.ts       # expéditions, révoltes, brigade, élections (chances affichées = réelles)
 npx vite-node tests/teams.ts         # spécialistes, bonus du Don, meilleure équipe
+npx vite-node tests/crews.ts         # équipes des capos : équilibre, postes, bonus, cascade, garde (chance affichée = réelle)
 npx vite-node tests/sim.ts 300 --retire=50   # le bot prend sa retraite à la semaine 50
 ```
 
@@ -64,6 +65,8 @@ Le bot ne gère ni la heat ni les commerçants : il sert à repérer les dérive
 - **Carte générée.** Chaque nouvelle partie tire ses quartiers, leur place et les territoires des familles (carte classique au choix).
 - **Pression.** Un capo ambitieux peu loyal peut tenter un coup d'État ; les ennemis jurés tentent d'assassiner le Don.
 - **Contrats.** Trois objectifs à moyen terme en permanence, avec échéance et récompense.
+- **Les équipes des capos.** Chaque soldat appartient à une équipe : celle d'un capo (3 hommes, +1 tous les 2 niveaux du capo) ou la garde du Don (4 au plus). « Répartir les équipes » les forme équilibrées : la garde prend les meilleurs combattants et les plus fidèles, les autres sont distribués pour que les équipes aient la même force, un mélange de costauds et de discrets, des spécialistes étalés ; les frères d'armes restent ensemble, les rivaux sont séparés. Chaque capo est responsable de quartiers (« Répartir les quartiers », ou le menu Responsable de chaque quartier) ; chaque lundi, il poste lui-même ses hommes, les quartiers les plus exposés d'abord (frontière, guerre, expédition annoncée, revenus). Un poste choisi à la main reste fixé. Les recrues rejoignent l'équipe qui a le plus de place ; un nouveau capo prend les hommes sans équipe. *Commandement* : selon son trait, un capo donne un bonus à toute son équipe (Brute, Tireur, Tête brûlée, Gueule cassée : +1 de force ; Négociateur, Beau parleur : +1 satisfaction par semaine dans ses quartiers ; Comptable : +10 % de revenus dans ses quartiers ; Fantôme, Sang-froid : prison ÷2 ; Fidèle : loyauté jamais sous 40). *Loyauté en cascade* : les hommes se rapprochent chaque semaine de la loyauté de leur capo ; un capo qui trahit part avec ceux qui sont sous 50. *La garde* protège le Don des tueurs et des traîtres : un capo ambitieux qui frappe affronte la garde (chance exacte affichée), et elle se bat pour l'héritier. « Envoyer l'équipe de… » en un clic sur un coup ou un assaut.
+- **Les onglets s'ouvrent au fil de la partie.** Au départ : Quartier, Le Don, Alcool, Coups, Famille, Journal. Puis Rivaux (semaine 3 ou premier combat), Réseau (heat 30, dossier qui monte ou 15 de respect), Villes (35 de respect), Commission (60 de respect, ou une motion qui te vise), Cercle (premier enfant, ou le Don à 55 ans). Le consigliere annonce chaque ouverture, et l'onglet porte un badge « nouveau ».
 - **L'onglet Famille.** Trois sous-onglets : Hommes, Recrutement, Liens. Une ligne par homme (Force, Discrétion, loyauté, poste) qu'un clic déplie en fiche complète. Filtres rapides (en réserve, à risque, fidèles, inactifs, capos, blessés et prison), par quartier, ville ou trait ; tris par loyauté, force, discrétion, niveau, salaire, inactivité ; regroupement par quartier. Un homme resté 4 semaines en réserve sans rien faire porte un badge « inactif ».
 - **Hommes.** Chaque assaut, défense ou coup donne de l'expérience. À chaque niveau, +1 dans la stat la plus utilisée ; tous les deux niveaux, un trait (Tireur d'élite, Gueule cassée, Fantôme, Comptable, Chauffeur, Négociateur…). Rangs : Recrue, Soldat, Homme de confiance, Vétéran, Capo. Les 4 recrues sont renouvelées chaque semaine, avec leurs traits et parfois un défaut (Bavard, Cupide, Ivrogne, Trouillard). Les Dons rivaux ont aussi des traits, et en gagnent avec leurs victoires (Aguerri) ou leurs défaites contre toi (Revanchard).
 - **Le Don.** Ton personnage : Poigne, Ombre, Verbe, Flair, expérience double, et des points à placer en stats ou en talents (Boucher, Renard, Parrain : 5 talents chacun). Il peut monter au front (assauts, coups) : +2 par homme à ses côtés, +2 respect, mais +5 heat (vu sur les lieux), blessures, cicatrices, arrestation ou mort.
@@ -110,6 +113,9 @@ src/
   mapgen.ts     carte générée
   buildings.ts  effets des bâtiments, améliorations, emplacements
   teams.ts      la meilleure équipe en un clic (coups, assauts, grand coup)
+  crews.ts      équipes des capos : répartition, quartiers, poste automatique, cascade, trahison
+  command.ts    commandement des capos (bonus selon le trait)
+  unlocks.ts    onglets débloqués au fil de la partie
   pressure.ts   coalition, capos ambitieux, tentatives d'assassinat
   objectives.ts contrats à moyen terme
   fx.ts         effets visuels : camions, fusillades, compteurs, une du journal

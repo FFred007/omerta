@@ -158,9 +158,9 @@ export function heirTally(s: GameState, rival?: Member) {
 /** Prendre le trône par la force : l'héritier et ses fidèles contre le prétendant et les siens */
 export function forceChance(s: GameState, t: ReturnType<typeof heirTally>) {
   const hm = heirMember(s, t.heir);
-  // les soldats suivent le sang du Don (à 30 % de leur force) ; les capos et anciens votent avec leurs hommes
+  // la garde du Don se bat pour l'héritier à pleine force, les autres soldats à 30 % ; les capos et anciens votent avec leurs hommes
   const mine = (hm?.force ?? 4) + t.voters.filter((v) => v.yes && v.member).reduce((a, v) => a + v.member!.force, 0)
-    + s.members.filter((m) => m.rank !== 'capo' && !m.isChild && !m.isDon && m.status === 'actif').reduce((a, m) => a + m.force * 0.3, 0);
+    + s.members.filter((m) => m.rank !== 'capo' && !m.isChild && !m.isDon && m.status === 'actif').reduce((a, m) => a + m.force * (m.crew === 'garde' ? 1 : 0.3), 0);
   const theirs = (t.pretender?.force ?? 5) + 3 + t.voters.filter((v) => !v.yes && v.member).reduce((a, v) => a + v.member!.force * 0.5, 0) + t.voters.filter((v) => !v.yes && v.notable).length;
   return winChance(mine, theirs);
 }

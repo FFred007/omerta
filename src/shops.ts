@@ -1,4 +1,5 @@
 // Commerçants : tarif de protection, satisfaction, prêts et faveurs
+import { districtCommand } from './command';
 import { TARIFFS } from './data';
 import { chance, clamp, district, log, membersIn, news, owned, randInt, satisfaction } from './state';
 import { has } from './traits';
@@ -44,6 +45,7 @@ export function shopsTick(s: GameState) {
       if ((d.unrest ?? 0) > 0) delta -= 1;
       if (s.heat > 70) delta -= 1;
       if (membersIn(s, d.id).some((m) => has(m, 'beauparleur'))) delta += 2;
+      if (districtCommand(s, d) === 'commerce') delta += 1;
       if (donHasTalent(s, 'p_commercants')) delta += 1;
       if (spouseHas(s, 'quartier')) delta += 1;
       if (isActive(s, 'cure')) delta += 1;

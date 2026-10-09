@@ -1,4 +1,7 @@
 import { BUSINESSES, COUNCIL_BRIBE, JUDGE_BRIBE, PROMOTE_COST, stashHeat, stashLimit } from './data';
+import { assignNewDistricts, autoPost, capoLeaves, cascadeTick, crewName, initCrews, joinBestCrew, onNewCapo } from './crews';
+import { commandFloor, commandJail } from './command';
+import { unlockTick } from './unlocks';
 import { brigadeActive, dropSenator, endgameTick, politicsHeatLines, politicsRaids } from './endgame';
 import { circleTick, initCircle } from './circle';
 import { rollEvent } from './events';
@@ -102,7 +105,10 @@ export function hire(s: GameState, recruitId: number): ActionResult {
     loyalty: r.loyalty, salary: r.salary, assignment: null, status: 'actif', statusWeeks: 0, weeksServed: 0, city: donCity(s),
     xp: 0, level: r.level ?? 0, traits: [...(r.traits ?? [])], usage: { force: 0, discretion: 0 },
   });
-  log(s, 'good', `${r.name} « ${r.nickname} » a prêté serment.`);
+  const recruit = s.members[s.members.length - 1];
+  joinBestCrew(s, recruit);
+  autoPost(s);
+  log(s, 'good', `${r.name} « ${r.nickname} » a prêté serment${recruit.crew !== undefined ? ` (${crewName(s, recruit.crew).toLowerCase()})` : ''}.`);
   return ok;
 }
 
@@ -144,6 +150,8 @@ export function promote(s: GameState, memberId: number): ActionResult {
   m.loyalty = clamp(m.loyalty + 15, 0, 100);
   log(s, 'good', `${m.name} « ${m.nickname} » est fait capo.`);
   onPromote(s, m);
+  onNewCapo(s, m);
+  autoPost(s);
   return ok;
 }
 
@@ -251,6 +259,9 @@ export function heatForecast(s: GameState) {
 export function startGame(familyName?: string, classic = false) {
   const s = newGame(familyName, classic);
   initCircle(s);
+  initCrews(s);
+  s.unlocked = {};
+  unlockTick(s, true);
   generateJobs(s);
   fillObjectives(s);
   return s;
@@ -300,6 +311,7 @@ export function endTurn(s: GameState): LogEntry[] {
   commissionTick(s);
   shopsTick(s);
   crewTurn(s, raidedDistricts);
+  cascadeTick(s);
   idleTick(s, week);
   bondsTick(s);
   vendettasTick(s);
@@ -329,6 +341,10 @@ export function endTurn(s: GameState): LogEntry[] {
   s.orders = [];
   s.lowProfile = false;
   s.week += 1;
+  unlockTick(s);
+  // lundi : chaque capo poste ses hommes
+  assignNewDistricts(s);
+  autoPost(s);
   generateJobs(s);
 
   // nouvelles recrues chaque semaine
@@ -587,7 +603,7 @@ function resolveRaids(s: GameState, raided: Set<string>) {
     news(s, 4, `Descente des Prohis à ${d.name}`, `Un ${BUSINESSES[b.kind].name.toLowerCase()} fermé, l'alcool versé dans le caniveau sous les huées.`);
     for (const m of membersIn(s, d.id)) {
       if (has(m, 'fantome')) continue;
-      if (chance((11 - m.discretion) * 0.05)) {
+      if (chance((11 - m.discretion) * 0.05 * commandJail(s, m))) {
         m.status = 'prison';
         m.statusWeeks = randInt(3, 6);
         if (s.judge) m.statusWeeks = Math.ceil(m.statusWeeks / 2);
@@ -739,7 +755,7 @@ function crewTurn(s: GameState, raided: Set<string>) {
     if (s.heat > 70) delta -= 2;
     if (has(m, 'cupide')) delta -= 1;
     if (!holder(s, memberCity(m))) delta -= 1; // loin du Don, sans gouverneur
-    m.loyalty = clamp(m.loyalty + delta, has(m, 'fidele') ? 50 : 0, 100);
+    m.loyalty = clamp(m.loyalty + delta, Math.max(has(m, 'fidele') ? 50 : 0, commandFloor(s, m)), 100);
 
     if (m.loyalty < 25 && !has(m, 'fidele') && chance(0.3)) betray(s, m);
   }
@@ -747,6 +763,7 @@ function crewTurn(s: GameState, raided: Set<string>) {
 
 function betray(s: GameState, m: Member) {
   s.members = s.members.filter((x) => x.id !== m.id);
+  if (m.rank === 'capo') capoLeaves(s, m, 'le suivent dans sa trahison');
   const living = s.rivals.filter((r) => r.alive);
   if (living.length && chance(0.5)) {
     const r = pick(living);

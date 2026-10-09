@@ -2,6 +2,7 @@ import {
   BASE_STORAGE, BUSINESSES, DISTRICT_SEEDS, FIRST_NAMES, GOOD_ORDER, GOODS, LAST_NAMES, NICKNAMES,
   RIVAL_SEEDS, SHOP_NAMES, SHOP_TRADES, TARIFFS, TRIPOT_WHISKY,
 } from './data';
+import { commandForce, districtCommand } from './command';
 import { politicsHeat, senatorRetainer } from './endgame';
 import type { District, GameState, Good, Member, Owner, Recruit, LogTone, Shop } from './types';
 import { TRAITS, donHas, donStartTraits, familyCount, familyHas, gainXp, has, rankTitle, rollRecruitTraits } from './traits';
@@ -295,7 +296,7 @@ export function defenseOf(s: GameState, d: District): number {
   const garageBonus = d.businesses.filter((b) => b.kind === 'garage').length * 5 + d.businesses.filter((b) => b.kind === 'armurerie').length * 4;
   if (d.owner === 'player') {
     const men = membersIn(s, d.id).filter((m) => !committedToAttack(s, m.id));
-    return 4 + (d.id === 'sicily' ? 6 : 0) + garageBonus + men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'roc') ? 3 : 0), 0);
+    return 4 + (d.id === 'sicily' ? 6 : 0) + garageBonus + men.reduce((t, m) => t + m.force + commandForce(s, m) + (m.rank === 'capo' ? 2 : 0) + (has(m, 'roc') ? 3 : 0), 0);
   }
   if (d.owner === 'neutral') return d.garrison + garageBonus;
   const r = rival(s, d.owner)!;
@@ -307,7 +308,7 @@ export function defenseOf(s: GameState, d: District): number {
 export function attackPower(s: GameState, memberIds: number[]): number {
   const men = s.members.filter((m) => memberIds.includes(m.id));
   const armed = (m: Member) => (m.assignment && s.districts.find((d) => d.id === m.assignment)?.businesses.some((b) => b.kind === 'armurerie') ? 1 : 0);
-  const base = men.reduce((t, m) => t + m.force + (m.rank === 'capo' ? 2 : 0) + (has(m, 'tireur') ? 3 : 0) + (has(m, 'tetebrulee') ? 3 : 0) - (has(m, 'trouillard') ? 2 : 0) + armed(m), 0);
+  const base = men.reduce((t, m) => t + m.force + commandForce(s, m) + (m.rank === 'capo' ? 2 : 0) + (has(m, 'tireur') ? 3 : 0) + (has(m, 'tetebrulee') ? 3 : 0) - (has(m, 'trouillard') ? 2 : 0) + armed(m), 0);
   return Math.max(0, Math.round(base + donPresence(s, men) + s.respect / 20 + teamBondBonus(s, memberIds)));
 }
 
@@ -429,7 +430,7 @@ export function projection(s: GameState) {
   const plan = salesPlan(s);
   const flair = flairBonus(s);
   for (const d of owned(s)) {
-    const mult = capoBonus(s, d) * ((d.unrest ?? 0) > 0 ? 0.5 : 1) * cityMult(s, cityOf(d));
+    const mult = capoBonus(s, d) * ((d.unrest ?? 0) > 0 ? 0.5 : 1) * cityMult(s, cityOf(d)) * (districtCommand(s, d) === 'comptes' ? 1.1 : 1);
     const r = s.lowProfile ? 0 : racketOf(d);
     let f = 0;
     for (const b of d.businesses) {
